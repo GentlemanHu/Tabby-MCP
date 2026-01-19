@@ -69,7 +69,18 @@
 
 ## 📦 安装
 
-### 方法一：快速安装（推荐）
+### 方法一：Tabby 插件管理器（最简单）
+
+在 Tabby 内置插件管理器中搜索 `tabby-mcp`：
+
+1. 打开 Tabby → **设置** → **插件**
+2. 搜索 `tabby-mcp`
+3. 点击 **安装**
+4. 重启 Tabby
+
+---
+
+### 方法二：快速安装脚本
 
 **无需 Node.js！** 从 GitHub 下载预构建版本。
 
@@ -105,7 +116,7 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/GentlemanHu/Tabby-MCP/m
 
 ---
 
-### 方法二：从源码构建
+### 方法三：从源码构建
 
 需要 **Node.js 18+**。
 

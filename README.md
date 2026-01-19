@@ -69,7 +69,18 @@
 
 ## 📦 Installation
 
-### Method 1: Quick Install (Recommended)
+### Method 1: Tabby Plugin Manager (Easiest)
+
+Search for `tabby-mcp` directly in Tabby's built-in Plugin Manager:
+
+1. Open Tabby → **Settings** → **Plugins**
+2. Search for `tabby-mcp`
+3. Click **Install**
+4. Restart Tabby
+
+---
+
+### Method 2: Quick Install Script
 
 **No Node.js required!** Downloads pre-built release from GitHub.
 
@@ -105,7 +116,7 @@ Invoke-WebRequest -Uri https://raw.githubusercontent.com/GentlemanHu/Tabby-MCP/m
 
 ---
 
-### Method 2: Build from Source
+### Method 3: Build from Source
 
 Requires **Node.js 18+**.
 
