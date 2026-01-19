@@ -71,10 +71,10 @@
 
 ### Method 1: Tabby Plugin Manager (Easiest)
 
-Search for `tabby-mcp` directly in Tabby's built-in Plugin Manager:
+Search for `tabby-mcp-server` directly in Tabby's built-in Plugin Manager:
 
 1. Open Tabby → **Settings** → **Plugins**
-2. Search for `tabby-mcp`
+2. Search for `tabby-mcp-server`
 3. Click **Install**
 4. Restart Tabby
 

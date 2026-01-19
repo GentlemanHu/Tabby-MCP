@@ -71,10 +71,10 @@
 
 ### 方法一：Tabby 插件管理器（最简单）
 
-在 Tabby 内置插件管理器中搜索 `tabby-mcp`：
+在 Tabby 内置插件管理器中搜索 `tabby-mcp-server`：
 
 1. 打开 Tabby → **设置** → **插件**
-2. 搜索 `tabby-mcp`
+2. 搜索 `tabby-mcp-server`
 3. 点击 **安装**
 4. 重启 Tabby
 
