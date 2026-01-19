@@ -1,0 +1,84 @@
+{
+  "name": "tabby-mcp",
+  "version": "1.0.0",
+  "description": "MCP (Model Context Protocol) server plugin for Tabby terminal - Complete terminal control with 18 MCP tools",
+  "homepage": "https://github.com/GentlemanHu/Tabby-MCP",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GentlemanHu/Tabby-MCP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GentlemanHu/Tabby-MCP/issues"
+  },
+  "keywords": [
+    "tabby-plugin",
+    "mcp",
+    "model-context-protocol",
+    "terminal",
+    "ai",
+    "cursor",
+    "windsurf",
+    "ssh",
+    "sse"
+  ],
+  "main": "dist/index.js",
+  "typings": "typings/index.d.ts",
+  "scripts": {
+    "build": "webpack --progress --color",
+    "watch": "webpack --progress --color --watch",
+    "install-plugin": "bash scripts/install.sh",
+    "uninstall-plugin": "bash scripts/uninstall.sh"
+  },
+  "files": [
+    "dist",
+    "typings"
+  ],
+  "author": "GentlemanHu <gentlemanhu@github.com>",
+  "contributors": [
+    "AI Assistant (Claude/Gemini)"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "@xterm/addon-serialize": "^0.12.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "zod": "^3.22.4"
+  },
+  "peerDependencies": {
+    "@angular/animations": "*",
+    "@angular/common": "*",
+    "@angular/core": "*",
+    "@angular/forms": "*",
+    "@ng-bootstrap/ng-bootstrap": "*",
+    "rxjs": "*",
+    "tabby-core": "*",
+    "tabby-settings": "*",
+    "tabby-terminal": "*"
+  },
+  "devDependencies": {
+    "@angular/common": "^17.3.0",
+    "@angular/core": "^17.3.0",
+    "@angular/forms": "^17.3.0",
+    "@angular/animations": "^17.3.0",
+    "@angular/platform-browser": "^17.3.0",
+    "@ng-bootstrap/ng-bootstrap": "^16.0.0",
+    "rxjs": "^7.8.0",
+    "tabby-core": "^1.0.163",
+    "tabby-settings": "^1.0.163",
+    "tabby-terminal": "^1.0.163",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "apply-loader": "^2.0.0",
+    "css-loader": "^6.8.1",
+    "sass": "^1.69.0",
+    "sass-loader": "^13.3.2",
+    "strip-ansi": "^7.1.0",
+    "style-loader": "^3.3.3",
+    "ts-loader": "^9.5.0",
+    "typescript": "^5.3.0",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  }
+}
