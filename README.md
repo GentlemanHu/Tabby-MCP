@@ -354,6 +354,13 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.1.2 (2026-01-22)
+
+**Optimization:**
+- 📦 Reduced npm package size by moving bundled dependencies to devDependencies
+- All dependencies (express, zod, @modelcontextprotocol/sdk) are now bundled into dist/index.js
+- Installing from npm/Tabby store no longer downloads unnecessary packages
+
 ### v1.1.1 (2026-01-21)
 
 **Bug Fixes:**
