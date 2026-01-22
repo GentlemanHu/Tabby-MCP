@@ -371,6 +371,15 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.1.5 (2026-01-22)
+
+**New Features:**
+- 🌐 **Internationalization (i18n)** - Settings UI now supports multiple languages
+  - English (`en-US`, `en-GB`)
+  - Chinese Simplified (`zh-CN`, `zh-TW`)
+  - Auto-follows Tabby's language setting
+  - Extensible: easily add new languages by adding JSON files
+
 ### v1.1.4 (2026-01-22)
 
 **New Features:**
