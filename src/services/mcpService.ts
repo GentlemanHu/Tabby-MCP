@@ -10,6 +10,7 @@ import * as http from 'http';
 import { McpLoggerService } from './mcpLogger.service';
 import { ToolCategory, McpTool } from '../types/types';
 import { randomUUID } from 'crypto';
+import { PLUGIN_VERSION } from '../version';
 
 /**
  * MCP Server Service - Core MCP server with Streamable HTTP and SSE transport
@@ -42,7 +43,7 @@ export class McpService {
         // Initialize MCP Server
         this.server = new McpServer({
             name: 'Tabby MCP',
-            version: '1.1.3'
+            version: PLUGIN_VERSION
         });
 
         // Configure Express

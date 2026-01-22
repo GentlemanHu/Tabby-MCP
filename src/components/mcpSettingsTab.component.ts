@@ -4,9 +4,7 @@ import { Subscription } from 'rxjs';
 import { McpService } from '../services/mcpService';
 import { McpLoggerService } from '../services/mcpLogger.service';
 import { McpI18nService } from '../services/i18n.service';
-
-// Version from package.json - update on each release
-const PLUGIN_VERSION = '1.1.5';
+import { PLUGIN_VERSION } from '../version';
 
 /**
  * MCP Settings Tab Component with i18n support
@@ -17,7 +15,15 @@ const PLUGIN_VERSION = '1.1.5';
     <div class="mcp-settings">
       <div class="header-row">
         <h3>🔌 {{ t('mcp.settings.title') }}</h3>
-        <span class="version-badge">v{{ version }}</span>
+        <div class="header-right">
+          <div class="header-icons">
+            <span class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP')" title="GitHub">🐙</span>
+            <span class="header-icon" (click)="openUrl('https://www.npmjs.com/package/tabby-mcp-server')" title="npm">📦</span>
+            <span class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/issues')" title="{{ t('mcp.about.issues') }}">🐛</span>
+            <span class="header-icon" (click)="openUrl('mailto:justfeelingme@gmail.com')" title="Email">✉️</span>
+          </div>
+          <span class="version-badge" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/releases')">v{{ version }}</span>
+        </div>
       </div>
       
       <div class="form-group">
@@ -343,6 +349,25 @@ const PLUGIN_VERSION = '1.1.5';
       align-items: center;
       justify-content: space-between;
     }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .header-icons {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .header-icon {
+      font-size: 1rem;
+      cursor: pointer;
+      opacity: 0.7;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .header-icon:hover {
+      opacity: 1;
+      transform: scale(1.15);
+    }
     .version-badge {
       background: rgba(0, 123, 255, 0.2);
       color: #007bff;
@@ -350,6 +375,11 @@ const PLUGIN_VERSION = '1.1.5';
       border-radius: 4px;
       font-size: 0.85em;
       font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .version-badge:hover {
+      background: rgba(0, 123, 255, 0.35);
     }
     .status-container {
       display: flex;
@@ -396,6 +426,40 @@ const PLUGIN_VERSION = '1.1.5';
       padding: 0.5rem;
       background: rgba(40, 167, 69, 0.1);
       border-radius: 4px;
+    }
+    .about-info {
+      background: rgba(0,0,0,0.2);
+      padding: 1rem;
+      border-radius: 4px;
+    }
+    .about-links {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.75rem;
+    }
+    .about-link {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: rgba(0, 123, 255, 0.15);
+      border-radius: 4px;
+      color: #007bff;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .about-link:hover {
+      background: rgba(0, 123, 255, 0.25);
+      text-decoration: none;
+    }
+    .about-icon {
+      font-size: 1.1em;
+    }
+    .about-credit {
+      margin: 0;
+      font-size: 0.85em;
+      color: #6c757d;
     }
   `]
 })
@@ -509,6 +573,24 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
 
   clearLogs(): void {
     this.logger.clearLogs();
+  }
+
+  /**
+   * Open URL in external browser
+   */
+  openUrl(url: string): void {
+    // Use Electron shell to open external URLs
+    if (typeof window !== 'undefined' && (window as any).require) {
+      try {
+        const { shell } = (window as any).require('electron');
+        shell.openExternal(url);
+      } catch (e) {
+        // Fallback to window.open
+        window.open(url, '_blank');
+      }
+    } else {
+      window.open(url, '_blank');
+    }
   }
 
   saveConfig(): void {

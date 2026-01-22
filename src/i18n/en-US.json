@@ -81,5 +81,8 @@
     "mcp.connectionInfo.copyConfig": "Copy Config",
     "mcp.common.saved": "✓ Settings saved",
     "mcp.common.mb": "MB",
-    "mcp.common.sec": "sec"
+    "mcp.common.sec": "sec",
+    "mcp.about.title": "About",
+    "mcp.about.issues": "Report Issues",
+    "mcp.about.credit": "Made with ❤️ by AI and GentlemanHu"
 }

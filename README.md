@@ -371,6 +371,14 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.1.6 (2026-01-22)
+
+**Improvements:**
+- 🎨 **Enhanced Settings UI** - Redesigned header with compact social links (GitHub, npm)
+- 🔗 **Smart Links** - All external links now open correctly in default browser
+- 🔢 **Auto-versioning** - Plugin version is now automatically read from `package.json`
+- 🧹 **Cleaner UI** - Optimized layout and removed redundant sections
+
 ### v1.1.5 (2026-01-22)
 
 **New Features:**
