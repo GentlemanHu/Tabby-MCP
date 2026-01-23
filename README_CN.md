@@ -20,62 +20,67 @@
 
 ---
 
+> 🚀 **Tabby-MCP** 是专为 [Tabby Terminal](https://tabby.sh/) 打造的强力插件，旨在弥合 AI Agent 与终端环境之间的鸿沟。它提供了标准化的 MCP 接口，让 AI 能够安全地执行命令、管理标签页并处理文件操作。
+>
+> *让你的 AI 拥有操作终端的“双手”。*
+
+<div align="center">
+  <video src="assets/tabby-mcp-intro-final.mp4" controls width="100%"></video>
+</div>
+
+---
+
 ## ✨ 功能特性
 
-<table>
-<tr>
-<td width="50%">
-
-### 🖥️ 终端控制
-- 执行命令并捕获输出
-- **稳定会话 ID** (v1.1+)
-- 读取终端缓冲区内容
-- 中止正在运行的命令
-- 列出所有终端会话
-
-</td>
-<td width="50%">
-
-### 📑 标签页管理
-- 创建/关闭/复制标签页
-- **分割窗格**（水平/垂直）
-- 在标签页之间导航
-- 左右移动标签页
-- 重新打开已关闭的标签页
-
-</td>
-</tr>
-<tr>
-<td>
-
-### 🔗 配置文件管理
-- 列出所有终端配置文件
-- 使用配置文件打开新标签页
-- SSH 快速连接
-- 配置文件选择对话框
-
-</td>
-<td>
-
-### 📁 SFTP 操作 (v1.1+)
-- 列出/读取/写入远程文件
-- 创建/删除目录
-- 重命名/移动文件
-- *（需要 tabby-ssh）*
-
-</td>
-</tr>
-<tr>
-<td colspan="2">
-
-### 🔒 安全特性
-- 结对编程模式（命令确认对话框）
-- 完善的日志记录
-- 安全的命令执行
-
-</td>
-</tr>
+<table width="100%">
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <h3>🖥️ 终端控制</h3>
+      <ul align="left">
+        <li>执行命令并捕获输出</li>
+        <li><b>稳定会话 ID</b> (v1.1+)</li>
+        <li>读取终端缓冲区内容</li>
+        <li>中止正在运行的命令</li>
+        <li>发送交互式输入</li>
+      </ul>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <h3>📑 标签页管理</h3>
+      <ul align="left">
+        <li>创建/关闭/复制标签页</li>
+        <li><b>分割窗格</b>（水平/垂直）</li>
+        <li>在标签页之间导航</li>
+        <li>左右移动标签页</li>
+        <li>重新打开已关闭的标签页</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <h3>🔗 配置文件管理</h3>
+      <ul align="left">
+        <li>列出所有终端配置文件</li>
+        <li>使用配置文件打开新标签页</li>
+        <li>SSH 快速连接</li>
+        <li>配置文件选择对话框</li>
+      </ul>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <h3>📁 SFTP 操作 (v1.1+)</h3>
+      <ul align="left">
+        <li>列出/读取/写入远程文件</li>
+        <li>创建/删除目录</li>
+        <li>重命名/移动文件</li>
+        <li><i>（需要 tabby-ssh）</i></li>
+      </ul>
+    </td>
+  </tr>
 </table>
+
+<div align="center">
+  <h3>🔒 安全特性</h3>
+  <p>结对编程模式（命令确认对话框） • 完善的日志记录 • 安全的命令执行</p>
+</div>
 
 ---
 

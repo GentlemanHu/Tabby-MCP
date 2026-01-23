@@ -20,62 +20,67 @@
 
 ---
 
+> 🚀 **Tabby-MCP** is a powerful plugin for [Tabby Terminal](https://tabby.sh/), bridging the gap between AI agents and your terminal environment. It provides a standardized MCP interface for AI to execute commands, manage tabs, and handle file operations securely.
+>
+> *Give your AI hands to work with.*
+
+<div align="center">
+  <video src="assets/tabby-mcp-intro-final.mp4" controls width="100%"></video>
+</div>
+
+---
+
 ## ✨ Features
 
-<table>
-<tr>
-<td width="50%">
-
-### 🖥️ Terminal Control
-- Execute commands with output capture
-- **Stable session IDs** (v1.1+)
-- Send interactive input (vim, less, top)
-- Read terminal buffer content
-- Abort/monitor running commands
-
-</td>
-<td width="50%">
-
-### 📑 Tab Management
-- Create/Close/Duplicate tabs
-- **Split panes** (horizontal/vertical)
-- Navigate between tabs
-- Move tabs left/right
-- Reopen closed tabs
-
-</td>
-</tr>
-<tr>
-<td>
-
-### 🔗 Profile & SSH
-- List all terminal profiles
-- Open new tabs with profiles
-- SSH quick connect
-- Profile selector dialog
-
-</td>
-<td>
-
-### 📁 SFTP Operations (v1.1+)
-- List/read/write remote files
-- Create/delete directories
-- Rename/move files
-- *(Requires tabby-ssh)*
-
-</td>
-</tr>
-<tr>
-<td colspan="2">
-
-### 🔒 Security Features
-- Pair programming mode with confirmation dialogs
-- Comprehensive logging
-- Safe command execution
-
-</td>
-</tr>
+<table width="100%">
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <h3>🖥️ Terminal Control</h3>
+      <ul align="left">
+        <li>Execute commands with output capture</li>
+        <li><b>Stable session IDs</b> (v1.1+)</li>
+        <li>Send interactive input (vim, less, top)</li>
+        <li>Read terminal buffer content</li>
+        <li>Abort/monitor running commands</li>
+      </ul>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <h3>📑 Tab Management</h3>
+      <ul align="left">
+        <li>Create/Close/Duplicate tabs</li>
+        <li><b>Split panes</b> (horizontal/vertical)</li>
+        <li>Navigate between tabs</li>
+        <li>Move tabs left/right</li>
+        <li>Reopen closed tabs</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <h3>🔗 Profile & SSH</h3>
+      <ul align="left">
+        <li>List all terminal profiles</li>
+        <li>Open new tabs with profiles</li>
+        <li>SSH quick connect</li>
+        <li>Profile selector dialog</li>
+      </ul>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <h3>📁 SFTP Operations (v1.1+)</h3>
+      <ul align="left">
+        <li>List/read/write remote files</li>
+        <li>Create/delete directories</li>
+        <li>Rename/move files</li>
+        <li><i>(Requires tabby-ssh)</i></li>
+      </ul>
+    </td>
+  </tr>
 </table>
+
+<div align="center">
+  <h3>🔒 Security Features</h3>
+  <p>Pair programming mode with confirmation dialogs • Comprehensive logging • Safe command execution</p>
+</div>
 
 ---
 
