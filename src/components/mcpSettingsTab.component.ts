@@ -42,6 +42,9 @@ import { PLUGIN_VERSION } from '../version';
           <button class="btn btn-secondary" (click)="restartServer()" *ngIf="isRunning">
             {{ t('mcp.server.restart') }}
           </button>
+          <button class="btn btn-outline-info" (click)="openMonitor()" title="Monitor Connections">
+            📋 Connections
+          </button>
         </div>
       </div>
 
@@ -243,7 +246,7 @@ import { PLUGIN_VERSION } from '../version';
         <label>{{ t('mcp.sftp.maxUploadSize') }}</label>
         <div class="input-group">
           <input type="number" class="form-control" [ngModel]="getMaxUploadSizeMB()" 
-                 (ngModelChange)="setMaxUploadSizeMB($event)" placeholder="10" min="0.1" max="100" step="0.5">
+                 (ngModelChange)="setMaxUploadSizeMB($event)" placeholder="10" min="0.1" max="102400" step="1">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.mb') }}</span>
           </div>
@@ -255,7 +258,7 @@ import { PLUGIN_VERSION } from '../version';
         <label>{{ t('mcp.sftp.maxDownloadSize') }}</label>
         <div class="input-group">
           <input type="number" class="form-control" [ngModel]="getMaxDownloadSizeMB()" 
-                 (ngModelChange)="setMaxDownloadSizeMB($event)" placeholder="10" min="0.1" max="100" step="0.5">
+                 (ngModelChange)="setMaxDownloadSizeMB($event)" placeholder="10" min="0.1" max="102400" step="1">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.mb') }}</span>
           </div>
@@ -337,6 +340,61 @@ import { PLUGIN_VERSION } from '../version';
 
       <div class="save-status mt-3" *ngIf="saveMessage">
         <span class="text-success">{{ saveMessage }}</span>
+      </div>
+
+      <!-- Connection Monitor Modal -->
+      <div class="modal-overlay" *ngIf="showMonitor" (click)="closeMonitor()">
+        <div class="modal-content" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h4>Active Connections ({{ sessions.length }})</h4>
+            <button class="action-btn" (click)="closeMonitor()">✕</button>
+          </div>
+          <div class="modal-body">
+            <table class="session-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Session ID / Client</th>
+                  <th>Duration</th>
+                  <th>Last Activity</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let s of sessions">
+                  <td>
+                    <span class="badge" [class.badge-success]="s.type==='streamable'" [class.badge-info]="s.type==='sse'">{{ s.type }}</span>
+                  </td>
+                  <td>
+                    <div class="mono" title="{{s.id}}">{{ s.id.slice(0, 8) }}...</div>
+                    <div style="font-size:0.8em; opacity:0.6" *ngIf="s.userAgent">{{ s.userAgent.substring(0, 40) }}...</div>
+                  </td>
+                  <td>{{ formatDuration(now - s.startTime) }}</td>
+                  <td>
+                    <div>{{ formatTime(s.lastActive) }}</div>
+                    <div style="font-size:0.85em; color: #88c0d0; font-weight: bold">{{ s.lastActivity }}</div>
+                    <div style="margin-top:4px" *ngIf="s.history && s.history.length">
+                       <div style="font-size:0.75em; opacity:0.5; margin-bottom:2px">History:</div>
+                       <ul class="history-list">
+                         <li *ngFor="let h of s.history">{{ h }}</li>
+                       </ul>
+                    </div>
+                  </td>
+                  <td>
+                    <button class="action-btn btn-danger-sm" (click)="closeSession(s.id)">Disconnect</button>
+                  </td>
+                </tr>
+                <tr *ngIf="sessions.length === 0">
+                  <td colspan="5" style="text-align: center; padding: 2rem; opacity: 0.6">No active connections</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-header" style="border-top: 1px solid rgba(255,255,255,0.1); border-bottom: none; justify-content: flex-end; padding: 0.75rem;">
+             <button class="btn btn-secondary btn-sm" (click)="refreshSessions()">Refresh</button>
+             <button class="btn btn-primary btn-sm ml-2" (click)="closeMonitor()">Close</button>
+          </div>
+        </div>
       </div>
     </div>
   `,
@@ -460,6 +518,98 @@ import { PLUGIN_VERSION } from '../version';
       margin: 0;
       font-size: 0.85em;
       color: #6c757d;
+    }
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      backdrop-filter: blur(2px);
+    }
+    .modal-content {
+      background: #1e1e1e; /* Dark theme default */
+      background: var(--theme-bg-more-2, #1e1e1e);
+      color: var(--body-fg, #fff);
+      width: 900px;
+      max-width: 95vw;
+      height: 600px;
+      max-height: 90vh;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .modal-header {
+      padding: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h4 { margin: 0; }
+    .modal-body {
+      padding: 0;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .session-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9em;
+    }
+    .session-table th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      background: rgba(0,0,0,0.2);
+      position: sticky;
+      top: 0;
+      backdrop-filter: blur(5px);
+    }
+    .session-table td {
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      vertical-align: middle;
+    }
+    .session-table tr:hover {
+      background: rgba(255,255,255,0.05);
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25em 0.4em;
+      font-size: 75%;
+      font-weight: 700;
+      line-height: 1;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: baseline;
+      border-radius: 0.25rem;
+    }
+    .badge-info { background-color: #17a2b8; color: white; }
+    .badge-success { background-color: #28a745; color: white; }
+    .mono { font-family: monospace; opacity: 0.8; }
+    .action-btn {
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+    .action-btn:hover { background: rgba(255,255,255,0.1); }
+    .btn-danger-sm { color: #ff6b6b; border-color: #ff6b6b; }
+    .btn-danger-sm:hover { background: rgba(220, 53, 69, 0.2); }
+    .history-list {
+      max-height: 100px;
+      overflow-y: auto;
+      font-size: 0.85em;
+      opacity: 0.7;
+      margin: 0;
+      padding-left: 1.2em;
     }
   `]
 })
@@ -650,5 +800,45 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   copyConfig(): void {
     navigator.clipboard.writeText(this.getConfigExample());
     this.logger.info('Config copied to clipboard');
+  }
+
+  // ============== Connection Monitor ==============
+
+  showMonitor = false;
+  sessions: any[] = [];
+
+  get now(): number { return Date.now(); }
+
+  openMonitor(): void {
+    this.refreshSessions();
+    this.showMonitor = true;
+  }
+
+  closeMonitor(): void {
+    this.showMonitor = false;
+  }
+
+  refreshSessions(): void {
+    this.sessions = this.mcpService.getSessions();
+  }
+
+  async closeSession(sessionId: string): Promise<void> {
+    if (confirm(this.t('Are you sure you want to disconnect this session?'))) {
+      await this.mcpService.closeSession(sessionId);
+      this.refreshSessions();
+    }
+  }
+
+  formatDuration(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ${s % 60}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  }
+
+  formatTime(ms: number): string {
+    return new Date(ms).toLocaleTimeString();
   }
 }

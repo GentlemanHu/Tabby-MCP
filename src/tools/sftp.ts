@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { BaseToolCategory } from './base-tool-category';
 import { McpLoggerService } from '../services/mcpLogger.service';
 import { McpTool, SFTPFileInfo } from '../types/types';
+import { TerminalToolCategory } from './terminal';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -57,7 +58,7 @@ export class SFTPToolCategory extends BaseToolCategory {
 
     // Cache SFTP sessions to avoid reopening
     private sftpSessionCache = new WeakMap<any, any>();
-    private tabToSessionId = new WeakMap<BaseTabComponent, string>();
+    // Note: Session IDs are now managed by TerminalToolCategory for consistency
 
     // Transfer task queue
     private transferTasks = new Map<string, TransferTask>();
@@ -66,12 +67,13 @@ export class SFTPToolCategory extends BaseToolCategory {
     constructor(
         private app: AppService,
         private config: ConfigService,
-        logger: McpLoggerService
+        logger: McpLoggerService,
+        private terminalTools: TerminalToolCategory
     ) {
         super(logger);
         if (sftpAvailable) {
             this.initializeTools();
-            this.logger.info('SFTP tools initialized (using Tabby SFTPSession API)');
+            this.logger.info('SFTP tools initialized (using Tabby SFTPSession API with shared session registry)');
         } else {
             this.logger.warn('SFTP tools not available (tabby-ssh not installed)');
         }
@@ -113,17 +115,15 @@ export class SFTPToolCategory extends BaseToolCategory {
         }
     }
 
-    private getOrCreateSessionId(tab: BaseTabComponent): string {
-        let sessionId = this.tabToSessionId.get(tab);
-        if (!sessionId) {
-            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-                const r = Math.random() * 16 | 0;
-                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-            this.tabToSessionId.set(tab, sessionId);
-        }
-        return sessionId;
+    /**
+     * Get session ID for a tab - delegates to TerminalToolCategory
+     * This ensures SFTP uses the same session IDs as terminal tools
+     */
+    private getOrCreateSessionId(tab: any): string {
+        // Delegate to terminal tools to ensure consistent session IDs
+        // TerminalToolCategory.getOrCreateSessionId expects BaseTerminalTabComponent
+        // SSHTabComponent extends BaseTerminalTabComponent, so this works
+        return this.terminalTools.getOrCreateSessionId(tab);
     }
 
     private findAllSSHTabs(): any[] {
@@ -149,50 +149,75 @@ export class SFTPToolCategory extends BaseToolCategory {
         if (!sftpAvailable) return null;
 
         const sshTabs = this.findAllSSHTabs();
+        this.logger.debug(`[findSSHSession] Found ${sshTabs.length} SSH tabs, locator: ${JSON.stringify(locator)}`);
 
+        // CASE 1: No locator provided - return first SSH tab (if any) as default
         if (!locator.sessionId && locator.tabIndex === undefined && !locator.title) {
             if (sshTabs.length > 0) {
                 const tab = sshTabs[0];
-                return { tab, sessionId: this.getOrCreateSessionId(tab) };
+                const sessionId = this.getOrCreateSessionId(tab);
+                this.logger.info(`[findSSHSession] No locator provided, using first SSH tab. sessionId=${sessionId}`);
+                return { tab, sessionId };
             }
+            this.logger.warn('[findSSHSession] No SSH tabs available');
             return null;
         }
 
+        // CASE 2: sessionId provided - MUST find exact match, NO FALLBACK
         if (locator.sessionId) {
-            const found = sshTabs.find(tab => this.getOrCreateSessionId(tab) === locator.sessionId);
-            if (found) {
-                return { tab: found, sessionId: locator.sessionId };
+            this.logger.debug(`[findSSHSession] Searching by sessionId: ${locator.sessionId}`);
+            for (const tab of sshTabs) {
+                const tabSessionId = this.getOrCreateSessionId(tab);
+                this.logger.debug(`[findSSHSession] Checking tab: sessionId=${tabSessionId}, title=${tab.title}`);
+                if (tabSessionId === locator.sessionId) {
+                    this.logger.info(`[findSSHSession] Found exact sessionId match: ${locator.sessionId}`);
+                    return { tab, sessionId: locator.sessionId };
+                }
             }
+            // CRITICAL: Do NOT fallback! Return null if sessionId doesn't match.
+            this.logger.warn(`[findSSHSession] sessionId ${locator.sessionId} NOT FOUND among ${sshTabs.length} SSH tabs. Returning null.`);
+            return null;
         }
 
+        // CASE 3: tabIndex provided
         if (locator.tabIndex !== undefined) {
             const allTabs = this.app.tabs;
             if (locator.tabIndex >= 0 && locator.tabIndex < allTabs.length) {
                 const tab = allTabs[locator.tabIndex];
                 if (tab instanceof SSHTabComponent) {
-                    return { tab, sessionId: this.getOrCreateSessionId(tab) };
+                    const sessionId = this.getOrCreateSessionId(tab);
+                    this.logger.info(`[findSSHSession] Found by tabIndex: ${locator.tabIndex}, sessionId=${sessionId}`);
+                    return { tab, sessionId };
                 } else if (tab instanceof SplitTabComponent) {
-                    const focusedTab = (tab as SplitTabComponent).getFocusedTab();
+                    const splitTab = tab as SplitTabComponent;
+                    const focusedTab = splitTab.getFocusedTab();
                     if (focusedTab && focusedTab instanceof SSHTabComponent) {
-                        return { tab: focusedTab, sessionId: this.getOrCreateSessionId(focusedTab) };
+                        const sessionId = this.getOrCreateSessionId(focusedTab);
+                        this.logger.info(`[findSSHSession] Found focused pane in split tab ${locator.tabIndex}, sessionId=${sessionId}`);
+                        return { tab: focusedTab, sessionId };
                     }
                 }
             }
+            // tabIndex provided but no match - return null
+            this.logger.warn(`[findSSHSession] tabIndex ${locator.tabIndex} did not resolve to an SSH tab`);
+            return null;
         }
 
+        // CASE 4: title provided
         if (locator.title) {
             const titleLower = locator.title.toLowerCase();
             const found = sshTabs.find(tab => tab.title?.toLowerCase().includes(titleLower));
             if (found) {
-                return { tab: found, sessionId: this.getOrCreateSessionId(found) };
+                const sessionId = this.getOrCreateSessionId(found);
+                this.logger.info(`[findSSHSession] Found by title match: ${locator.title}, sessionId=${sessionId}`);
+                return { tab: found, sessionId };
             }
+            this.logger.warn(`[findSSHSession] No title match for: ${locator.title}`);
+            return null;
         }
 
-        if (sshTabs.length > 0) {
-            const tab = sshTabs[0];
-            return { tab, sessionId: this.getOrCreateSessionId(tab) };
-        }
-
+        // Should not reach here, but if it does, return null
+        this.logger.warn('[findSSHSession] No locator matched');
         return null;
     }
 
@@ -649,21 +674,19 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                 const sync = params.sync !== false;
 
                 const doUpload = async () => {
-                    task.status = 'running';
+                    let fileUpload: StreamFileUpload | undefined;
                     try {
                         const sftp = await this.getSFTPSession(session.tab);
                         if (!sftp) {
                             throw new Error('Could not open SFTP session');
                         }
 
-                        // Read local file
-                        const localData = fs.readFileSync(params.localPath);
-
-                        // Create upload adapter
-                        const fileUpload = new BufferFileUpload(
-                            path.basename(params.localPath),
-                            new Uint8Array(localData),
-                            (bytes) => {
+                        // Create stream-based upload adapter
+                        // This reads the file in chunks on demand, avoiding OOM on large files
+                        fileUpload = new StreamFileUpload(
+                            params.localPath,
+                            stats.size,
+                            (bytes: number) => {
                                 task.bytesTransferred = bytes;
                                 task.progress = Math.round((bytes / task.totalBytes) * 100);
                                 task.speed = bytes / ((Date.now() - task.startTime) / 1000);
@@ -681,7 +704,18 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                         task.status = 'failed';
                         task.error = error.message || String(error);
                         task.endTime = Date.now();
+
+                        // Try to cancel/close if running
+                        if (fileUpload) {
+                            fileUpload.cancel();
+                        }
+
                         throw error;
+                    } finally {
+                        // Ensure file descriptor is closed
+                        if (fileUpload) {
+                            fileUpload.close();
+                        }
                     }
                 };
 
@@ -765,7 +799,23 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                     }
 
                     // Check remote file size
-                    const remoteStats = await sftp.stat(params.remotePath);
+                    let remoteStats;
+                    try {
+                        remoteStats = await sftp.stat(params.remotePath);
+                    } catch (error: any) {
+                        if (error.code === 'ENOENT' || error.message?.includes('No such file')) {
+                            return {
+                                content: [{
+                                    type: 'text', text: JSON.stringify({
+                                        success: false,
+                                        error: `Remote file not found: ${params.remotePath}`
+                                    })
+                                }]
+                            };
+                        }
+                        throw error;
+                    }
+
                     const maxSize = this.config.store.mcp?.sftp?.maxDownloadSize || 10 * 1024 * 1024;
 
                     if (remoteStats.size > maxSize) {
@@ -804,14 +854,16 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
 
                     const sync = params.sync !== false;
 
+                    let fileDownload: StreamFileDownload | undefined;
                     const doDownload = async () => {
                         task.status = 'running';
                         try {
-                            // Create download adapter
-                            const fileDownload = new BufferFileDownload(
-                                path.basename(params.localPath),
+                            // Create stream-based download adapter
+                            // This writes to disk immediately in chunks
+                            fileDownload = new StreamFileDownload(
+                                params.localPath,
                                 remoteStats.size,
-                                (bytes) => {
+                                (bytes: number) => {
                                     task.bytesTransferred = bytes;
                                     task.progress = Math.round((bytes / task.totalBytes) * 100);
                                     task.speed = bytes / ((Date.now() - task.startTime) / 1000);
@@ -821,9 +873,7 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                             // Download using Tabby's API
                             await sftp.download(params.remotePath, fileDownload);
 
-                            // Write to local file
-                            const data = fileDownload.getData();
-                            fs.writeFileSync(params.localPath, Buffer.from(data));
+                            // No need to write file manually, StreamFileDownload does it on the fly
 
                             task.status = 'completed';
                             task.progress = 100;
@@ -833,7 +883,18 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                             task.status = 'failed';
                             task.error = error.message || String(error);
                             task.endTime = Date.now();
+
+                            // Try to cancel/close if running
+                            if (fileDownload) {
+                                fileDownload.cancel();
+                            }
+
                             throw error;
+                        } finally {
+                            // Ensure file descriptor is closed
+                            if (fileDownload) {
+                                fileDownload.close();
+                            }
                         }
                     };
 
@@ -1004,60 +1065,110 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
 }
 
 /**
- * Buffer-based FileUpload adapter for SFTP upload
+ * Stream-based FileUpload adapter for SFTP upload
+ * Reads file in chunks to prevent OOM on large files
  */
-class BufferFileUpload {
-    private data: Uint8Array;
+class StreamFileUpload {
+    private fd: number | null = null;
     private name: string;
+    private filePath: string;
+    private size: number;
     private position = 0;
-    private readonly chunkSize = 32768;
+    private readonly chunkSize = 64 * 1024; // 64KB chunks
     private onProgress: (bytes: number) => void;
+    private cancelled = false;
 
-    constructor(name: string, data: Uint8Array, onProgress?: (bytes: number) => void) {
-        this.name = name;
-        this.data = data;
+    constructor(filePath: string, size: number, onProgress?: (bytes: number) => void) {
+        this.name = path.basename(filePath);
+        this.filePath = filePath;
+        this.size = size;
         this.onProgress = onProgress || (() => { });
+    }
+
+    open(): void {
+        if (this.fd === null) {
+            this.fd = fs.openSync(this.filePath, 'r');
+        }
     }
 
     getName(): string { return this.name; }
-    getSize(): number { return this.data.length; }
+    getSize(): number { return this.size; }
     getMode(): number { return 0o644; }
     getCompletedBytes(): number { return this.position; }
-    isComplete(): boolean { return this.position >= this.data.length; }
-    isCancelled(): boolean { return false; }
+    isComplete(): boolean { return this.position >= this.size; }
+    isCancelled(): boolean { return this.cancelled; }
+
+    cancel(): void {
+        this.cancelled = true;
+        this.close();
+    }
 
     async read(): Promise<Uint8Array> {
-        if (this.position >= this.data.length) {
+        if (this.cancelled) throw new Error('Transfer cancelled');
+        if (this.fd === null) this.open();
+
+        if (this.position >= this.size) {
             return new Uint8Array(0);
         }
-        const end = Math.min(this.position + this.chunkSize, this.data.length);
-        const chunk = this.data.slice(this.position, end);
-        this.position = end;
+
+        const buffer = Buffer.alloc(this.chunkSize);
+        const bytesRead = fs.readSync(this.fd!, buffer, 0, this.chunkSize, this.position);
+
+        if (bytesRead === 0) return new Uint8Array(0);
+
+        this.position += bytesRead;
         this.onProgress(this.position);
-        return chunk;
+
+        return new Uint8Array(buffer.subarray(0, bytesRead));
     }
 
+    // Required by some SFTP implementations
     async readAll(): Promise<Uint8Array> {
-        return this.data;
+        throw new Error('readAll not supported for stream upload (file too large)');
     }
 
-    close(): void { }
+    close(): void {
+        if (this.fd !== null) {
+            try {
+                fs.closeSync(this.fd);
+            } catch (e) {
+                // Ignore close errors
+            }
+            this.fd = null;
+        }
+    }
 }
 
 /**
- * Buffer-based FileDownload adapter for SFTP download
+ * Stream-based FileDownload adapter for SFTP download
+ * Writes file in chunks to prevent OOM and enable immediate disk persistence
  */
-class BufferFileDownload {
-    private chunks: Uint8Array[] = [];
+class StreamFileDownload {
+    private fd: number | null = null;
     private name: string;
+    private filePath: string;
     private expectedSize: number;
     private bytesReceived = 0;
     private onProgress: (bytes: number) => void;
+    private cancelled = false;
 
-    constructor(name: string, size: number, onProgress?: (bytes: number) => void) {
-        this.name = name;
+    constructor(filePath: string, size: number, onProgress?: (bytes: number) => void) {
+        this.name = path.basename(filePath);
+        this.filePath = filePath;
         this.expectedSize = size;
         this.onProgress = onProgress || (() => { });
+    }
+
+    open(): void {
+        if (this.fd === null) {
+            // Ensure directory exists
+            const dir = path.dirname(this.filePath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            // Open for writing, create if not exists, truncate if exists
+            this.fd = fs.openSync(this.filePath, 'w');
+        }
     }
 
     getName(): string { return this.name; }
@@ -1065,24 +1176,35 @@ class BufferFileDownload {
     getMode(): number { return 0o644; }
     getCompletedBytes(): number { return this.bytesReceived; }
     isComplete(): boolean { return this.bytesReceived >= this.expectedSize; }
-    isCancelled(): boolean { return false; }
+    isCancelled(): boolean { return this.cancelled; }
+
+    cancel(): void {
+        this.cancelled = true;
+        this.close();
+    }
 
     async write(buffer: Uint8Array): Promise<void> {
-        this.chunks.push(buffer);
+        if (this.cancelled) throw new Error('Transfer cancelled');
+        if (this.fd === null) this.open();
+
+        fs.writeSync(this.fd!, buffer);
         this.bytesReceived += buffer.length;
         this.onProgress(this.bytesReceived);
     }
 
+    // Deprecated: No longer needed as we write correctly to disk
     getData(): Uint8Array {
-        const totalLength = this.chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of this.chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
-        }
-        return result;
+        return new Uint8Array(0);
     }
 
-    close(): void { }
+    close(): void {
+        if (this.fd !== null) {
+            try {
+                fs.closeSync(this.fd);
+            } catch (e) {
+                // Ignore close errors
+            }
+            this.fd = null;
+        }
+    }
 }

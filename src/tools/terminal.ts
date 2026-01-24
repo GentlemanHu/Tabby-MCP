@@ -218,12 +218,19 @@ export class TerminalToolCategory extends BaseToolCategory {
         return 'sh';
     }
 
+
+
     /**
      * Generate shell-compatible wrapped command for output capture
      * 
+     * CRITICAL: Commands are wrapped in `eval` to ensure that syntax errors
+     * in the user command do NOT prevent the end marker from being printed.
+     * Without eval, a syntax error causes the shell to reject the entire line,
+     * including our end marker, causing the MCP server to hang until timeout.
+     * 
      * Different shells use different syntax:
-     * - bash/zsh/sh: $? for exit code, && for chaining
-     * - fish: $status for exit code, ; for chaining
+     * - bash/zsh/sh: eval '...' with single-quote escaping, $? for exit code
+     * - fish: eval "..." with backslash escaping, $status for exit code
      */
     private getWrappedCommand(
         command: string,
@@ -233,20 +240,22 @@ export class TerminalToolCategory extends BaseToolCategory {
     ): string {
         switch (shellType) {
             case 'fish':
-                // Fish shell: use $status instead of $?
-                // Fish doesn't support && in the same way, use ; and check status
-                return `echo "${startMarker}"; ${command}; set -l __mcp_exit $status; echo "${endMarker} $__mcp_exit"`;
+                // Fish shell: use $status instead of $?, eval with double quotes
+                // Fish escaping: \ escapes " and \ inside double quotes
+                const fishEscaped = command
+                    .replace(/\\/g, '\\\\')  // Escape backslashes first
+                    .replace(/"/g, '\\"');   // Escape double quotes
+                return `echo "${startMarker}"; eval "${fishEscaped}"; set -l __mcp_exit $status; echo "${endMarker} $__mcp_exit"`;
 
             case 'bash':
             case 'zsh':
-                // Bash/Zsh: standard POSIX-like syntax
-                return `echo "${startMarker}" && ${command} ; echo "${endMarker} $?"`;
-
             case 'sh':
             default:
-                // POSIX sh: most compatible syntax
-                // Use subshell to ensure exit code is captured correctly
-                return `echo "${startMarker}" && ${command} ; echo "${endMarker} $?"`;
+                // Bash/Zsh/POSIX: wrap in eval to catch syntax errors
+                // Use single quotes to prevent premature variable expansion
+                // Escape strategy: ' -> '\'' (close quote, escaped quote, open quote)
+                const escaped = command.replace(/'/g, "'\\''");
+                return `echo "${startMarker}" && eval '${escaped}' ; echo "${endMarker} $?"`;
         }
     }
 

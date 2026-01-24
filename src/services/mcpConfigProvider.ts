@@ -40,6 +40,8 @@ export class McpConfigProvider extends ConfigProvider {
             sftp: {
                 enabled: true,              // Enable SFTP tools if tabby-ssh is available
                 maxFileSize: 1024 * 1024,   // Max file size for read operations (1MB)
+                maxUploadSize: 10 * 1024 * 1024 * 1024,   // Default: 10GB
+                maxDownloadSize: 10 * 1024 * 1024 * 1024, // Default: 10GB
                 timeout: 60000              // SFTP operation timeout in ms
             }
         }

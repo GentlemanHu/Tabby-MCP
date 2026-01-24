@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { IncomingMessage, ServerResponse } from 'http';
 import * as http from 'http';
+import { Socket } from 'net';
 import { McpLoggerService } from './mcpLogger.service';
 import { ToolCategory, McpTool } from '../types/types';
 import { randomUUID } from 'crypto';
@@ -26,6 +27,7 @@ export class McpService {
     private streamableTransports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
     private app!: express.Application;
     private httpServer?: http.Server;
+    private sockets = new Set<Socket>();
     private isRunning = false;
     private toolCategories: ToolCategory[] = [];
 
@@ -237,9 +239,11 @@ export class McpService {
                     transport.onclose = () => {
                         this.logger.info(`Streamable HTTP: Transport closed (onclose): ${sessionId}`);
                         delete this.streamableTransports[sessionId];
+                        this.sessionMetadata.delete(sessionId);
                     };
 
                     this.streamableTransports[sessionId] = transport;
+                    this.initSessionMetadata(sessionId, 'streamable', req);
 
                     // Connect to MCP server
                     await this.server.connect(transport);
@@ -249,6 +253,15 @@ export class McpService {
 
                 // Set session ID header in response
                 res.setHeader('mcp-session-id', sessionId);
+
+                // Track activity
+                if (req.body?.method) {
+                    let activity = req.body.method;
+                    if (activity === 'tools/call' && req.body.params?.name) {
+                        activity += `: ${req.body.params.name}`;
+                    }
+                    this.trackActivity(sessionId, activity);
+                }
 
                 // Handle the message
                 try {
@@ -295,6 +308,7 @@ export class McpService {
                 const sessionId = transport.sessionId;
                 this.logger.info(`Legacy SSE: New connection sessionId=${sessionId}`);
                 this.legacyTransports[sessionId] = transport;
+                this.initSessionMetadata(sessionId, 'sse', req);
 
                 // Set up heartbeat to keep connection alive
                 const heartbeatInterval = setInterval(() => {
@@ -312,12 +326,14 @@ export class McpService {
                     this.logger.info(`Legacy SSE: Connection closed sessionId=${sessionId}`);
                     clearInterval(heartbeatInterval);
                     delete this.legacyTransports[sessionId];
+                    this.sessionMetadata.delete(sessionId);
                 });
 
                 res.on('error', (err) => {
                     this.logger.error(`Legacy SSE: Connection error sessionId=${sessionId}`, err);
                     clearInterval(heartbeatInterval);
                     delete this.legacyTransports[sessionId];
+                    this.sessionMetadata.delete(sessionId);
                 });
 
                 await this.server.connect(transport);
@@ -349,6 +365,15 @@ export class McpService {
             if (!transport) {
                 res.status(400).json({ error: `No transport found for sessionId ${sessionId}` });
                 return;
+            }
+
+            // Track activity
+            if (req.body?.method) {
+                let activity = req.body.method;
+                if (activity === 'tools/call' && req.body.params?.name) {
+                    activity += `: ${req.body.params.name}`;
+                }
+                this.trackActivity(sessionId, activity);
             }
 
             this.logger.debug(`Legacy SSE: Message received for sessionId=${sessionId}`);
@@ -435,6 +460,14 @@ export class McpService {
                     resolve();
                 });
 
+                // Track active connections for graceful shutdown
+                this.httpServer.on('connection', (socket: Socket) => {
+                    this.sockets.add(socket);
+                    socket.on('close', () => {
+                        this.sockets.delete(socket);
+                    });
+                });
+
                 this.httpServer.on('error', (err: any) => {
                     this.isRunning = false;
                     if (err.code === 'EADDRINUSE') {
@@ -482,6 +515,15 @@ export class McpService {
             }
             this.streamableTransports = {};
 
+            // Force close all active connections
+            if (this.sockets.size > 0) {
+                this.logger.info(`Closing ${this.sockets.size} active connections`);
+                for (const socket of this.sockets) {
+                    socket.destroy();
+                }
+                this.sockets.clear();
+            }
+
             // Close HTTP server
             if (this.httpServer) {
                 await new Promise<void>((resolve) => {
@@ -518,6 +560,73 @@ export class McpService {
      */
     public getActiveConnections(): number {
         return Object.keys(this.legacyTransports).length + Object.keys(this.streamableTransports).length;
+    }
+
+    // ============================================================
+    // CONNECTION MONITORING & MANAGEMENT
+    // ============================================================
+
+    private sessionMetadata = new Map<string, {
+        id: string,
+        type: 'sse' | 'streamable',
+        userAgent?: string,
+        startTime: number,
+        lastActive: number,
+        lastActivity: string,
+        history: string[] // Last 10 activities
+    }>();
+
+    private trackActivity(sessionId: string, activity: string) {
+        const meta = this.sessionMetadata.get(sessionId);
+        if (meta) {
+            meta.lastActive = Date.now();
+            meta.lastActivity = activity;
+            meta.history.unshift(`[${new Date().toLocaleTimeString()}] ${activity}`);
+            if (meta.history.length > 10) meta.history.pop();
+        }
+    }
+
+    private initSessionMetadata(sessionId: string, type: 'sse' | 'streamable', req: Request) {
+        this.sessionMetadata.set(sessionId, {
+            id: sessionId,
+            type,
+            userAgent: req.headers['user-agent'],
+            startTime: Date.now(),
+            lastActive: Date.now(),
+            lastActivity: 'Connected',
+            history: []
+        });
+    }
+
+    public getSessions() {
+        return Array.from(this.sessionMetadata.values()).sort((a, b) => b.lastActive - a.lastActive);
+    }
+
+    public async closeSession(sessionId: string): Promise<boolean> {
+        this.logger.info(`Manually closing session: ${sessionId}`);
+
+        let found = false;
+
+        // Try closing streamable transport
+        if (this.streamableTransports[sessionId]) {
+            try {
+                await this.streamableTransports[sessionId].close();
+            } catch (e) { }
+            delete this.streamableTransports[sessionId];
+            found = true;
+        }
+
+        // Try closing legacy transport
+        if (this.legacyTransports[sessionId]) {
+            try {
+                this.legacyTransports[sessionId].close();
+            } catch (e) { }
+            delete this.legacyTransports[sessionId];
+            found = true;
+        }
+
+        this.sessionMetadata.delete(sessionId);
+        return found;
     }
 }
 

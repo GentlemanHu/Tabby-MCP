@@ -376,6 +376,25 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.2.0 (2026-01-24)
+
+**🔧 Critical Bug Fixes:**
+- 🔴 **SFTP Session ID Mismatch** - Fixed critical bug where SFTP tools operated on wrong SSH server
+  - Root cause: SFTP had separate session registry from Terminal, causing ID mismatch
+  - Fix: SFTP now shares session registry with Terminal tools
+  - SFTP no longer silently falls back to first SSH tab when sessionId doesn't match
+- 🔴 **Local Directory Auto-Creation** - SFTP downloads now automatically create missing local directories
+- 🔴 **Error Reporting** - Fixed misleading "Remote file not found" when local directory was missing
+
+**🎨 UI Improvements:**
+- 📋 **Connection Monitor** - Added "Connections" button to settings (always visible)
+- 🛠️ **Server Lifecycle** - Improved server restart with forced socket cleanup
+- 📊 **Session Tracking** - Added session metadata with activity history
+
+**🔧 Terminal Improvements:**
+- 🐚 **Heredoc Support** - Fixed complex shell commands (Python heredoc) execution
+- 📝 **Detailed Logging** - Added `[findSSHSession]` debug logs for troubleshooting
+
 ### v1.1.6 (2026-01-22)
 
 **Improvements:**
