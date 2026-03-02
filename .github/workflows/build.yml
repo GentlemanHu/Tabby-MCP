@@ -31,12 +31,12 @@ jobs:
       
       - name: Create release archive
         run: |
-          mkdir -p release/tabby-mcp
-          cp -r dist release/tabby-mcp/
-          cp -r typings release/tabby-mcp/
-          cp package.json release/tabby-mcp/
-          cd release && zip -r ../tabby-mcp-${{ github.ref_name }}.zip tabby-mcp
-          cd .. && tar -czvf tabby-mcp-${{ github.ref_name }}.tar.gz -C release tabby-mcp
+          mkdir -p release/tabby-mcp-server
+          cp -r dist release/tabby-mcp-server/
+          cp -r typings release/tabby-mcp-server/
+          cp package.json release/tabby-mcp-server/
+          cd release && zip -r ../tabby-mcp-${{ github.ref_name }}.zip tabby-mcp-server
+          cd .. && tar -czvf tabby-mcp-${{ github.ref_name }}.tar.gz -C release tabby-mcp-server
       
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

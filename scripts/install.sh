@@ -10,7 +10,7 @@ set -e
 
 REPO="GentlemanHu/Tabby-MCP"
 PLUGIN_NAME="tabby-mcp-server"
-API_URL="https://api.github.com/repos/$REPO/releases/latest"
+API_URL="https://api.github.com/repos/$REPO/releases"
 
 # Colors for output
 RED='\033[0;31m'
@@ -81,10 +81,11 @@ check_requirements() {
     fi
 }
 
-# Get latest release URL
+# Get latest release URL (supports both latest and prerelease)
 get_latest_release() {
     echo -e "${YELLOW}🔍 Fetching latest release info...${NC}"
     
+    # Fetch all releases (includes prereleases)
     RELEASE_INFO=$(curl -s "$API_URL")
     
     if echo "$RELEASE_INFO" | grep -q "rate limit"; then
@@ -92,14 +93,45 @@ get_latest_release() {
         exit 1
     fi
     
-    # Try to get tar.gz first, then zip
-    if command -v tar &> /dev/null; then
-        DOWNLOAD_URL=$(echo "$RELEASE_INFO" | grep -o '"browser_download_url": "[^"]*\.tar\.gz"' | head -1 | cut -d'"' -f4)
-        ARCHIVE_TYPE="tar.gz"
+    # Get the first release (latest, whether prerelease or not)
+    # Use python3/python if available for reliable JSON parsing, fallback to grep
+    if command -v python3 &> /dev/null; then
+        FIRST_RELEASE=$(echo "$RELEASE_INFO" | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+if isinstance(data, list) and len(data) > 0:
+    r=data[0]
+    tag=r.get('tag_name','')
+    pre='true' if r.get('prerelease') else 'false'
+    assets=r.get('assets',[])
+    tar_url=''
+    zip_url=''
+    for a in assets:
+        n=a.get('name','')
+        if n.endswith('.tar.gz'): tar_url=a['browser_download_url']
+        elif n.endswith('.zip'): zip_url=a['browser_download_url']
+    print(f'{tag}|{pre}|{tar_url}|{zip_url}')
+" 2>/dev/null)
+        
+        VERSION=$(echo "$FIRST_RELEASE" | cut -d'|' -f1)
+        IS_PRERELEASE=$(echo "$FIRST_RELEASE" | cut -d'|' -f2)
+        TAR_URL=$(echo "$FIRST_RELEASE" | cut -d'|' -f3)
+        ZIP_URL=$(echo "$FIRST_RELEASE" | cut -d'|' -f4)
+    else
+        # Fallback: try /releases/latest first (stable only)
+        LATEST_INFO=$(curl -s "$API_URL/latest")
+        VERSION=$(echo "$LATEST_INFO" | grep -o '"tag_name": "[^"]*"' | head -1 | cut -d'"' -f4)
+        TAR_URL=$(echo "$LATEST_INFO" | grep -o '"browser_download_url": "[^"]*\.tar\.gz"' | head -1 | cut -d'"' -f4)
+        ZIP_URL=$(echo "$LATEST_INFO" | grep -o '"browser_download_url": "[^"]*\.zip"' | head -1 | cut -d'"' -f4)
+        IS_PRERELEASE="false"
     fi
     
-    if [ -z "$DOWNLOAD_URL" ]; then
-        DOWNLOAD_URL=$(echo "$RELEASE_INFO" | grep -o '"browser_download_url": "[^"]*\.zip"' | head -1 | cut -d'"' -f4)
+    # Prefer tar.gz if tar is available
+    if command -v tar &> /dev/null && [ -n "$TAR_URL" ]; then
+        DOWNLOAD_URL="$TAR_URL"
+        ARCHIVE_TYPE="tar.gz"
+    elif [ -n "$ZIP_URL" ]; then
+        DOWNLOAD_URL="$ZIP_URL"
         ARCHIVE_TYPE="zip"
     fi
     
@@ -109,8 +141,11 @@ get_latest_release() {
         exit 1
     fi
     
-    VERSION=$(echo "$RELEASE_INFO" | grep -o '"tag_name": "[^"]*"' | head -1 | cut -d'"' -f4)
-    echo -e "${GREEN}✓ Found version: $VERSION${NC}"
+    if [ "$IS_PRERELEASE" = "true" ]; then
+        echo -e "${GREEN}✓ Found version: $VERSION ${YELLOW}(pre-release)${NC}"
+    else
+        echo -e "${GREEN}✓ Found version: $VERSION${NC}"
+    fi
 }
 
 # Download and extract
@@ -123,17 +158,31 @@ download_and_extract() {
     
     echo -e "${YELLOW}📦 Extracting...${NC}"
     
+    EXTRACT_DIR="$TEMP_DIR/extracted"
+    mkdir -p "$EXTRACT_DIR"
+    
     if [ "$ARCHIVE_TYPE" = "tar.gz" ]; then
-        tar -xzf "$ARCHIVE_FILE" -C "$TEMP_DIR"
+        tar -xzf "$ARCHIVE_FILE" -C "$EXTRACT_DIR"
     else
-        unzip -q "$ARCHIVE_FILE" -d "$TEMP_DIR"
+        unzip -q "$ARCHIVE_FILE" -d "$EXTRACT_DIR"
     fi
     
-    # Find extracted folder
-    EXTRACTED_DIR=$(find "$TEMP_DIR" -maxdepth 1 -type d -name "tabby-mcp-server*" | head -1)
+    # Find extracted folder - support both "tabby-mcp-server" (new) and "tabby-mcp" (old releases)
+    EXTRACTED_DIR=$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name "tabby-mcp-server" | head -1)
+    
+    if [ -z "$EXTRACTED_DIR" ]; then
+        EXTRACTED_DIR=$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name "tabby-mcp" | head -1)
+    fi
+    
+    # Last resort: find any directory containing package.json
+    if [ -z "$EXTRACTED_DIR" ] || [ ! -d "$EXTRACTED_DIR" ]; then
+        EXTRACTED_DIR=$(find "$EXTRACT_DIR" -maxdepth 2 -name "package.json" -exec dirname {} \; | head -1)
+    fi
     
     if [ -z "$EXTRACTED_DIR" ] || [ ! -d "$EXTRACTED_DIR" ]; then
-        echo -e "${RED}❌ Extraction failed${NC}"
+        echo -e "${RED}❌ Extraction failed - could not find plugin files${NC}"
+        echo "Archive contents:"
+        ls -la "$EXTRACT_DIR" 2>/dev/null || true
         rm -rf "$TEMP_DIR"
         exit 1
     fi

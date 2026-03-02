@@ -60,8 +60,11 @@ interface TransferTask {
 export class SFTPToolCategory extends BaseToolCategory {
     name = 'sftp';
 
-    // Cache SFTP sessions to avoid reopening
-    private sftpSessionCache = new WeakMap<any, any>();
+    // Cache SFTP sessions with TTL and SSH session reference
+    // Key: sshSession object (using Map because we need to iterate for cleanup)
+    // Value: { sftpSession, createdAt } - createdAt for TTL expiration
+    private sftpSessionCache = new Map<any, { sftpSession: any; createdAt: number }>();
+    private readonly SFTP_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
     // Note: Session IDs are now managed by TerminalToolCategory for consistency
 
     // Transfer task queue
@@ -125,6 +128,71 @@ export class SFTPToolCategory extends BaseToolCategory {
             toRemove.forEach(t => this.transferTasks.delete(t.id));
             this.emitTransferUpdate();
         }
+    }
+
+    /**
+     * Wait for transfer to complete with a polling fallback.
+     * 
+     * Tabby's SFTP API (based on russh) may not always resolve the Promise
+     * even when the transfer is complete. This method uses Promise.race to
+     * detect completion via polling the isComplete() method.
+     * 
+     * Also checks for SSH session disconnection to prevent infinite waits.
+     * 
+     * @param sftpPromise - The original sftpSession.upload/download promise
+     * @param transferObj - StreamFileUpload or StreamFileDownload with isComplete()
+     * @param sshSession - Optional SSH session to check for disconnection
+     * @param pollIntervalMs - How often to check isComplete()
+     * @param maxWaitMs - Maximum time to wait before timing out (0 = no timeout)
+     */
+    private async waitForTransferComplete<T>(
+        sftpPromise: Promise<T>,
+        transferObj: { isComplete: () => boolean; isCancelled: () => boolean },
+        sshSession?: { open: boolean },
+        pollIntervalMs: number = 500,
+        maxWaitMs: number = 0
+    ): Promise<T | 'completed_via_polling'> {
+        const startTime = Date.now();
+
+        // Create a polling promise that resolves when transfer is complete
+        const pollingPromise = new Promise<'completed_via_polling'>((resolve, reject) => {
+            const checkComplete = () => {
+                // Check if SSH session disconnected
+                if (sshSession && sshSession.open === false) {
+                    this.logger.warn('[SFTP] SSH session disconnected during transfer');
+                    reject(new Error('SSH connection lost during transfer'));
+                    return;
+                }
+
+                // Check if cancelled
+                if (transferObj.isCancelled()) {
+                    reject(new Error('Transfer cancelled'));
+                    return;
+                }
+
+                // Check if complete
+                if (transferObj.isComplete()) {
+                    this.logger.debug('[SFTP] Transfer detected as complete via polling');
+                    resolve('completed_via_polling');
+                    return;
+                }
+
+                // Check timeout (if maxWaitMs > 0)
+                if (maxWaitMs > 0 && (Date.now() - startTime) > maxWaitMs) {
+                    reject(new Error(`Transfer timed out after ${maxWaitMs}ms`));
+                    return;
+                }
+
+                // Continue polling
+                setTimeout(checkComplete, pollIntervalMs);
+            };
+
+            // Start polling with a slight delay to let the native promise resolve first
+            setTimeout(checkComplete, pollIntervalMs);
+        });
+
+        // Race between the original promise and our polling promise
+        return Promise.race([sftpPromise, pollingPromise]);
     }
 
     // ============== Public methods for UI ==============
@@ -286,32 +354,95 @@ export class SFTPToolCategory extends BaseToolCategory {
         try {
             const sshSession = sshTab.sshSession;
             if (!sshSession) {
+                this.logger.debug('[getSFTPSession] No sshSession on tab');
                 return null;
             }
 
-            // Key the cache by the actual SSH Session object, not the Tab.
-            // This ensures that if the Tab reconnects (getting a new sshSession object),
-            // we automatically get a cache miss and create a new SFTP session.
-            // Old cached sessions will be garbage collected when the old sshSession is destroyed.
+            // Check if SSH session itself is still open
+            if (!sshSession.open) {
+                this.logger.debug('[getSFTPSession] sshSession.open is false');
+                // Clear any stale cache entry
+                this.sftpSessionCache.delete(sshSession);
+                return null;
+            }
+
+            // Check cache first
             const cached = this.sftpSessionCache.get(sshSession);
             if (cached) {
-                return cached;
+                const age = Date.now() - cached.createdAt;
+
+                // Check TTL expiration (proactive cleanup before issues occur)
+                if (age > this.SFTP_SESSION_TTL_MS) {
+                    this.logger.info(`[getSFTPSession] SFTP session expired (age: ${Math.round(age / 1000)}s > TTL: ${this.SFTP_SESSION_TTL_MS / 1000}s). Recreating...`);
+                    this.sftpSessionCache.delete(sshSession);
+                    // Fall through to create new session
+                } else {
+                    // CRITICAL: Validate cached session is still alive
+                    // Even within TTL, network issues can cause session to become stale
+                    try {
+                        // Quick health check with a lightweight operation
+                        await Promise.race([
+                            cached.sftpSession.stat('/'),
+                            new Promise((_, reject) =>
+                                setTimeout(() => reject(new Error('SFTP health check timeout')), 3000)
+                            )
+                        ]);
+                        this.logger.debug(`[getSFTPSession] Cached SFTP session validated (age: ${Math.round(age / 1000)}s)`);
+                        return cached.sftpSession;
+                    } catch (healthError: any) {
+                        // Cached session is stale/broken, remove and recreate
+                        this.logger.warn(`[getSFTPSession] Cached SFTP session failed health check: ${healthError.message}. Recreating...`);
+                        this.sftpSessionCache.delete(sshSession);
+                        // Fall through to create new session
+                    }
+                }
             }
 
-            if (!sshSession.open) {
-                return null;
-            }
-
+            // Check if openSFTP is available
             if (typeof sshSession.openSFTP !== 'function') {
+                this.logger.debug('[getSFTPSession] sshSession.openSFTP is not a function');
                 return null;
             }
 
+            // Create new SFTP session
+            this.logger.debug('[getSFTPSession] Opening new SFTP session...');
             const sftpSession = await sshSession.openSFTP();
-            this.sftpSessionCache.set(sshSession, sftpSession);
+
+            // Store with creation timestamp for TTL management
+            this.sftpSessionCache.set(sshSession, {
+                sftpSession,
+                createdAt: Date.now()
+            });
+            this.logger.info('[getSFTPSession] New SFTP session opened and cached');
+
+            // Cleanup old entries from disconnected sessions
+            this.cleanupStaleSFTPSessions();
+
             return sftpSession;
         } catch (error: any) {
-            this.logger.error('Failed to open SFTP session:', error.message || error);
+            this.logger.error('[getSFTPSession] Failed to open SFTP session:', error.message || error);
             return null;
+        }
+    }
+
+    /**
+     * Cleanup stale SFTP sessions from closed SSH connections
+     * Called periodically when creating new sessions
+     */
+    private cleanupStaleSFTPSessions(): void {
+        const now = Date.now();
+        let cleaned = 0;
+
+        for (const [sshSession, cached] of this.sftpSessionCache.entries()) {
+            // Remove if SSH session is closed OR TTL expired
+            if (sshSession.open === false || (now - cached.createdAt) > this.SFTP_SESSION_TTL_MS) {
+                this.sftpSessionCache.delete(sshSession);
+                cleaned++;
+            }
+        }
+
+        if (cleaned > 0) {
+            this.logger.debug(`[cleanupStaleSFTPSessions] Removed ${cleaned} stale entries`);
         }
     }
 
@@ -772,7 +903,15 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                             }
                         );
 
-                        await sftpSession.upload(params.remotePath, fileUpload);
+                        // Wrap with polling fallback to handle Tabby SFTP API not resolving
+                        // Also pass sshSession to detect connection loss during transfer
+                        const sshSession = (session.tab as any).sshSession;
+                        const uploadPromise = sftpSession.upload(params.remotePath, fileUpload);
+                        const result = await this.waitForTransferComplete(uploadPromise, fileUpload, sshSession);
+
+                        if (result === 'completed_via_polling') {
+                            this.logger.info(`[sftp_upload] Transfer completed via polling fallback`);
+                        }
 
                         task.status = 'completed';
                         task.progress = 100;
@@ -968,7 +1107,15 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                                 }
                             );
 
-                            await sftpSession.download(params.remotePath, fileDownload);
+                            // Wrap with polling fallback to handle Tabby SFTP API not resolving
+                            // Also pass sshSession to detect connection loss during transfer
+                            const sshSession = (session.tab as any).sshSession;
+                            const downloadPromise = sftpSession.download(params.remotePath, fileDownload);
+                            const result = await this.waitForTransferComplete(downloadPromise, fileDownload, sshSession);
+
+                            if (result === 'completed_via_polling') {
+                                this.logger.info(`[sftp_download] Transfer completed via polling fallback`);
+                            }
 
                             task.status = 'completed';
                             task.progress = 100;

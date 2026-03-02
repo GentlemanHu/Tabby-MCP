@@ -165,7 +165,7 @@ npm run build
 
 ## 🔌 连接 AI 客户端
 
-### Cursor / Windsurf
+### Cursor / Windsurf / Cline (Streamable HTTP)
 
 添加到 `~/.cursor/mcp.json`：
 
@@ -173,7 +173,7 @@ npm run build
 {
   "mcpServers": {
     "Tabby MCP": {
-      "type": "sse",
+      "type": "streamable_http",
       "url": "http://localhost:3001/mcp"
     }
   }
@@ -340,6 +340,44 @@ npm run build
 
 ## 📝 更新日志
 
+### v1.4.0 (2026-03-02)
+
+**🐛 问题修复：**
+- 🔧 **修复日志导出双重序列化** (Issue #1) - 导出的 JSON 被错误地序列化为字符串而非正确的 JSON 格式
+- 🔧 **修复 MCP 配置类型** (Issue #2) - 配置示例现在正确显示 `streamable_http` 而非 `sse`
+- 🔧 **修复硬编码版本号** - `/health` 和 `/info` 端点现在使用 `PLUGIN_VERSION` 常量
+
+**🏗️ 架构改进：**
+- 🔒 **Per-session McpServer 隔离** - 每个 AI 客户端现在获得独立的 McpServer 实例
+  - 防止一个客户端断开/重连影响其他客户端的请求
+  - 修复 MCP SDK Bug #1459 过期回调干扰问题
+- 🔄 **SFTP 会话缓存重设计** - 将 `WeakMap` 替换为 `Map + TTL (5分钟)`
+  - 主动会话过期防止僵尸 SFTP 会话
+  - 使用 `stat('/')` 健康检查验证缓存有效性
+  - 传输过程中检测 SSH 断开
+  - 定期清理已关闭 SSH 会话的缓存
+
+**📦 构建和安装：**
+- 📝 修复安装脚本 (`install.sh` / `install.ps1`) 解压失败问题
+  - 压缩包目录名统一为 `tabby-mcp-server`
+  - 向后兼容旧版 `tabby-mcp` 目录名
+  - 新增 prerelease 支持
+  - 改进 JSON 解析（python3 回退）
+
+### v1.3.0 (2026-02-04)
+
+**问题修复：**
+- 🔧 修复会话断开误报问题 - `exec_command` 和 `send_input` 不再错误报告 "Session disconnected"
+  - 根因：`tab.destroyed` 是 `Subject<void>`（RxJS Observable），不是布尔值
+  - 现在正确使用 `session.open === false` 检测断开
+
+**清理：**
+- 🗑️ 移除无效的 SFTP「高级调优」设置（分块大小、并发数）
+- 🗑️ 移除过时的 `fastPut`/`fastGet` 检测代码
+
+**国际化：**
+- ✏️ 修复 SFTP 大小描述：将 "10 MB" 修正为 "10 GB"
+
 ### v1.2.0 (2026-01-24)
 
 **🔧 关键问题修复：**
@@ -410,21 +448,6 @@ npm run build
 - 📦 通过将已打包的依赖移至 devDependencies 减小 npm 包大小
 - 所有依赖（express, zod, @modelcontextprotocol/sdk）现在已打包到 dist/index.js
 - 从 npm/Tabby 商店安装不再下载不必要的包
-
-### v1.3.0 (2026-02-04)
-
-**问题修复：**
-- 🔧 修复会话断开误报问题 - `exec_command` 和 `send_input` 不再错误报告 "Session disconnected"
-  - 根因：`tab.destroyed` 是 `Subject<void>`（RxJS Observable），不是布尔值
-  - 现在正确使用 `session.open === false` 检测断开
-
-**清理：**
-- 🗑️ 移除无效的 SFTP「高级调优」设置（分块大小、并发数）
-  - 这些设置对 Tabby 基于 `russh` 的 SFTP 实现无效
-- 🗑️ 移除过时的 `fastPut`/`fastGet` 检测代码
-
-**国际化：**
-- ✏️ 修复 SFTP 大小描述：将 "10 MB" 修正为 "10 GB"
 
 ---
 

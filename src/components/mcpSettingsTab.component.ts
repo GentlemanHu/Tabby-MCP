@@ -838,8 +838,7 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
 
   exportLogsToFile(): void {
     const logs = this.logger.exportLogs();
-    const json = JSON.stringify(logs, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob([logs], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -920,7 +919,7 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     return JSON.stringify({
       mcpServers: {
         'Tabby MCP': {
-          type: 'sse',
+          type: 'streamable_http',
           url: `http://localhost:${port}/mcp`
         }
       }

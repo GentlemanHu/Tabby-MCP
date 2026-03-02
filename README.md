@@ -165,7 +165,7 @@ npm run build
 
 ## 🔌 Connecting AI Clients
 
-### SSE Mode (Cursor / Windsurf)
+### Streamable HTTP Mode (Cursor / Windsurf / Cline)
 
 Add to `~/.cursor/mcp.json`:
 
@@ -173,7 +173,7 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "Tabby MCP": {
-      "type": "sse",
+      "type": "streamable_http",
       "url": "http://localhost:3001/mcp"
     }
   }
@@ -376,6 +376,45 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.4.0 (2026-03-02)
+
+**🐛 Bug Fixes:**
+- 🔧 **Fixed log export double-serialization** (Issue #1) - Exported JSON was incorrectly serialized as a string instead of proper JSON
+- 🔧 **Fixed MCP config type** (Issue #2) - Config example now correctly shows `streamable_http` instead of `sse`
+- 🔧 **Fixed hardcoded version numbers** - `/health` and `/info` endpoints now use `PLUGIN_VERSION` constant
+
+**🏗️ Architecture Improvements:**
+- 🔒 **Per-session McpServer isolation** - Each AI client now gets its own McpServer instance
+  - Prevents one client's disconnect/reconnect from blocking other clients' requests
+  - Fixes MCP SDK Bug #1459 stale callback interference
+- 🔄 **SFTP session cache redesign** - Replaced `WeakMap` with `Map + TTL (5min)`
+  - Proactive session expiration prevents stale SFTP sessions
+  - Health check validation with `stat('/')` before reuse
+  - SSH disconnect detection during active transfers
+  - Periodic cleanup of closed SSH sessions from cache
+
+**📦 Build & Install:**
+- 📝 Fixed install scripts (`install.sh` / `install.ps1`) extraction failure
+  - Archive directory name now consistently `tabby-mcp-server`
+  - Backward compatible with old `tabby-mcp` directory names
+  - Added prerelease support
+  - Improved JSON parsing with python3 fallback
+
+### v1.3.0 (2026-02-04)
+
+**Bug Fixes:**
+- 🔧 Fixed session disconnect false positives - `exec_command` and `send_input` no longer incorrectly report "Session disconnected"
+  - Root cause: `tab.destroyed` is a `Subject<void>` (RxJS Observable), NOT a boolean
+  - Now correctly uses `session.open === false` for disconnect detection
+
+**Cleanup:**
+- 🗑️ Removed non-functional SFTP "Advanced Tuning" settings (Chunk Size, Concurrency)
+  - These had no effect with Tabby's `russh`-based SFTP implementation
+- 🗑️ Removed obsolete `fastPut`/`fastGet` detection code
+
+**i18n:**
+- ✏️ Fixed SFTP size descriptions: corrected "10 MB" → "10 GB" in all translations
+
 ### v1.2.0 (2026-01-24)
 
 **🔧 Critical Bug Fixes:**
@@ -446,23 +485,6 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 - 📦 Reduced npm package size by moving bundled dependencies to devDependencies
 - All dependencies (express, zod, @modelcontextprotocol/sdk) are now bundled into dist/index.js
 - Installing from npm/Tabby store no longer downloads unnecessary packages
-
-### v1.3.0 (2026-02-04)
-
-**Bug Fixes:**
-- 🔧 Fixed session disconnect false positives - `exec_command` and `send_input` no longer incorrectly report "Session disconnected"
-  - Root cause: `tab.destroyed` is a `Subject<void>` (RxJS Observable), NOT a boolean
-  - Now correctly uses `session.open === false` for disconnect detection
-
-**Cleanup:**
-- 🗑️ Removed non-functional SFTP "Advanced Tuning" settings (Chunk Size, Concurrency)
-  - These had no effect with Tabby's `russh`-based SFTP implementation
-- 🗑️ Removed obsolete `fastPut`/`fastGet` detection code
-
-**i18n:**
-- ✏️ Fixed SFTP size descriptions: corrected "10 MB" → "10 GB" in all translations
-
----
 
 ### v1.1.1 (2026-01-21)
 

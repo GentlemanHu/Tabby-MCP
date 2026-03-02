@@ -22,7 +22,9 @@ import { PLUGIN_VERSION } from '../version';
  */
 @Injectable({ providedIn: 'root' })
 export class McpService {
-    private server!: McpServer;
+    // Per-session McpServer instances - each client gets its own server to avoid SDK Bug #1459
+    // This prevents one client's disconnect from affecting other clients' pending requests
+    private sessionServers: { [sessionId: string]: McpServer } = {};
     private legacyTransports: { [sessionId: string]: SSEServerTransport } = {};
     private streamableTransports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
     private app!: express.Application;
@@ -30,6 +32,8 @@ export class McpService {
     private sockets = new Set<Socket>();
     private isRunning = false;
     private toolCategories: ToolCategory[] = [];
+    // Store tool definitions for registering with each new server
+    private registeredTools: { name: string, description: string, schema: any, handler: any }[] = [];
 
     constructor(
         public config: ConfigService,
@@ -39,22 +43,51 @@ export class McpService {
     }
 
     /**
-     * Initialize the MCP server
+     * Initialize the MCP service (no longer creates a single server)
      */
     private initializeServer(): void {
-        // Initialize MCP Server
-        this.server = new McpServer({
+        // Configure Express - servers are created per-session now
+        this.configureExpress();
+        this.logger.info('MCP Service initialized (Streamable HTTP + Legacy SSE) - per-session servers');
+    }
+
+    /**
+     * Create a new McpServer instance for a specific session
+     * Each client gets its own server to avoid SDK Bug #1459
+     */
+    private createServerForSession(sessionId: string): McpServer {
+        const server = new McpServer({
             name: 'Tabby MCP',
             version: PLUGIN_VERSION
         });
 
-        // Configure Express
-        this.configureExpress();
-        this.logger.info('MCP Server initialized (Streamable HTTP + Legacy SSE)');
+        // Register all tools with this server instance
+        for (const toolDef of this.registeredTools) {
+            (server.tool as any)(
+                toolDef.name,
+                toolDef.description,
+                toolDef.schema,
+                toolDef.handler
+            );
+        }
+
+        this.sessionServers[sessionId] = server;
+        this.logger.debug(`[Session ${sessionId}] Created new McpServer with ${this.registeredTools.length} tools`);
+        return server;
     }
 
     /**
-     * Register a tool category with the MCP server
+     * Clean up server for a specific session
+     */
+    private cleanupServerForSession(sessionId: string): void {
+        if (this.sessionServers[sessionId]) {
+            delete this.sessionServers[sessionId];
+            this.logger.debug(`[Session ${sessionId}] Cleaned up McpServer`);
+        }
+    }
+
+    /**
+     * Register a tool category - stores definitions for per-session server creation
      */
     public registerToolCategory(category: ToolCategory): void {
         this.toolCategories.push(category);
@@ -68,18 +101,20 @@ export class McpService {
 
             this.logger.debug(`Registering tool: ${tool.name} with schema keys: ${Object.keys(rawShape || {}).join(', ')}`);
 
-            (this.server.tool as any)(
-                tool.name,
-                tool.description,
-                rawShape,
-                tool.handler
-            );
-            this.logger.info(`Registered tool: ${tool.name}`);
+            // Store tool definition for later registration with per-session servers
+            this.registeredTools.push({
+                name: tool.name,
+                description: tool.description,
+                schema: rawShape,
+                handler: tool.handler
+            });
+
+            this.logger.info(`Registered tool definition: ${tool.name}`);
         });
     }
 
     /**
-     * Register a single tool
+     * Register a single tool - stores definition for per-session server creation
      */
     public registerTool(tool: McpTool): void {
         // Extract the raw shape from z.object() for MCP SDK compatibility
@@ -87,13 +122,15 @@ export class McpService {
             ? (tool.schema as any).shape
             : tool.schema;
 
-        (this.server.tool as any)(
-            tool.name,
-            tool.description,
-            rawShape,
-            tool.handler
-        );
-        this.logger.info(`Registered tool: ${tool.name}`);
+        // Store tool definition for later registration with per-session servers
+        this.registeredTools.push({
+            name: tool.name,
+            description: tool.description,
+            schema: rawShape,
+            handler: tool.handler
+        });
+
+        this.logger.info(`Registered tool definition: ${tool.name}`);
     }
 
     /**
@@ -110,7 +147,7 @@ export class McpService {
             res.status(200).json({
                 status: 'ok',
                 server: 'Tabby MCP',
-                version: '1.1.3',
+                version: PLUGIN_VERSION,
                 transport: 'StreamableHTTP + SSE',
                 uptime: process.uptime()
             });
@@ -120,7 +157,7 @@ export class McpService {
         this.app.get('/info', (_, res) => {
             res.status(200).json({
                 name: 'Tabby MCP',
-                version: '1.1.3',
+                version: PLUGIN_VERSION,
                 protocolVersion: '2025-03-26',
                 transports: ['streamable-http', 'sse'],
                 endpoints: {
@@ -240,13 +277,15 @@ export class McpService {
                         this.logger.info(`Streamable HTTP: Transport closed (onclose): ${sessionId}`);
                         delete this.streamableTransports[sessionId];
                         this.sessionMetadata.delete(sessionId);
+                        this.cleanupServerForSession(sessionId); // Clean up the per-session server
                     };
 
                     this.streamableTransports[sessionId] = transport;
                     this.initSessionMetadata(sessionId, 'streamable', req);
 
-                    // Connect to MCP server
-                    await this.server.connect(transport);
+                    // Create per-session McpServer and connect to transport
+                    const server = this.createServerForSession(sessionId);
+                    await server.connect(transport);
 
                     this.logger.info(`Streamable HTTP: New session created: ${sessionId}`);
                 }
@@ -327,6 +366,7 @@ export class McpService {
                     clearInterval(heartbeatInterval);
                     delete this.legacyTransports[sessionId];
                     this.sessionMetadata.delete(sessionId);
+                    this.cleanupServerForSession(sessionId); // Clean up the per-session server
                 });
 
                 res.on('error', (err) => {
@@ -334,9 +374,12 @@ export class McpService {
                     clearInterval(heartbeatInterval);
                     delete this.legacyTransports[sessionId];
                     this.sessionMetadata.delete(sessionId);
+                    this.cleanupServerForSession(sessionId); // Clean up the per-session server
                 });
 
-                await this.server.connect(transport);
+                // Create per-session McpServer and connect to transport
+                const server = this.createServerForSession(sessionId);
+                await server.connect(transport);
             } catch (error) {
                 this.logger.error('Legacy SSE: Failed to establish connection:', error);
                 if (!res.headersSent) {
@@ -514,6 +557,10 @@ export class McpService {
                 }
             }
             this.streamableTransports = {};
+
+            // Clear all per-session servers
+            this.sessionServers = {};
+            this.logger.debug('Cleared all per-session McpServer instances');
 
             // Force close all active connections
             if (this.sockets.size > 0) {
