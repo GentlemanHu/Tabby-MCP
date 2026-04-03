@@ -340,6 +340,13 @@ npm run build
 
 ## 📝 更新日志
 
+### v1.5.1 (2026-04-03)
+
+**🐛 问题修复：**
+- 🔧 **修复 `/api/tool/{name}` 端点返回 404** (Issue #4) - 工具 API 端点在 `configureExpress()` 中注册时 `toolCategories` 为空（Angular 依赖注入初始化顺序问题）
+  - 将 `configureToolEndpoints()` 移至 `startServer()` 中调用，此时所有工具已注册完毕
+  - 添加重复注册保护，防止服务器重启时路由重复注册
+
 ### v1.4.0 (2026-03-02)
 
 **🐛 问题修复：**

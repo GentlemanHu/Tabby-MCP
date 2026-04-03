@@ -34,6 +34,8 @@ export class McpService {
     private toolCategories: ToolCategory[] = [];
     // Store tool definitions for registering with each new server
     private registeredTools: { name: string, description: string, schema: any, handler: any }[] = [];
+    // Track whether tool endpoints have been registered to prevent duplicates on restart
+    private toolEndpointsConfigured = false;
 
     constructor(
         public config: ConfigService,
@@ -423,8 +425,6 @@ export class McpService {
             await transport.handlePostMessage(req, res);
         });
 
-        // Configure API endpoints for direct tool access
-        this.configureToolEndpoints();
     }
 
     /**
@@ -464,6 +464,10 @@ export class McpService {
      * Configure HTTP API endpoints for direct tool access
      */
     private configureToolEndpoints(): void {
+        if (this.toolEndpointsConfigured) {
+            this.logger.debug('Tool endpoints already configured, skipping');
+            return;
+        }
         this.toolCategories.forEach(category => {
             category.mcpTools.forEach(tool => {
                 this.app.post(`/api/tool/${tool.name}`, async (req: Request, res: Response) => {
@@ -478,6 +482,8 @@ export class McpService {
                 });
             });
         });
+        this.toolEndpointsConfigured = true;
+        this.logger.info(`Configured ${this.toolCategories.reduce((s, c) => s + c.mcpTools.length, 0)} tool API endpoints`);
     }
 
     /**
@@ -490,6 +496,11 @@ export class McpService {
         }
 
         const serverPort = port || this.config.store.mcp?.port || 3001;
+
+        // Configure API endpoints for direct tool access
+        // Must be called here (not in configureExpress) because tools are registered
+        // by McpModule constructor AFTER McpService constructor runs (Issue #4)
+        this.configureToolEndpoints();
 
         return new Promise((resolve, reject) => {
             try {

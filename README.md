@@ -376,6 +376,13 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.5.1 (2026-04-03)
+
+**🐛 Bug Fixes:**
+- 🔧 **Fixed `/api/tool/{name}` returning 404** (Issue #4) - Tool API endpoints were registered during `configureExpress()` when `toolCategories` was still empty due to Angular DI initialization order
+  - Moved `configureToolEndpoints()` to `startServer()` where all tools are guaranteed to be registered
+  - Added duplicate registration guard to prevent route duplication on server restart
+
 ### v1.4.0 (2026-03-02)
 
 **🐛 Bug Fixes:**
