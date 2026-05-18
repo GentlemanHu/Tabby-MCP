@@ -90,6 +90,9 @@
 
 Search for `tabby-mcp-server` directly in Tabby's built-in Plugin Manager:
 
+<img width="640" height="262" alt="image" src="https://github.com/user-attachments/assets/0dc65801-1ad5-47fb-a666-779ac6c7d17e" />
+
+
 1. Open Tabby → **Settings** → **Plugins**
 2. Search for `tabby-mcp-server`
 3. Click **Install**
