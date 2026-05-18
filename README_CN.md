@@ -89,6 +89,7 @@
 ### 方法一：Tabby 插件管理器（最简单）
 
 在 Tabby 内置插件管理器中搜索 `tabby-mcp-server`：
+<img width="640" height="262" alt="image" src="https://github.com/user-attachments/assets/d3d410db-35f8-4664-99e2-796bb3f8be03" />
 
 1. 打开 Tabby → **设置** → **插件**
 2. 搜索 `tabby-mcp-server`
