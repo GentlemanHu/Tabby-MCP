@@ -343,6 +343,14 @@ npm run build
 
 ## 📝 更新日志
 
+### v1.6.1 (2026-06-06)
+
+**✨ 新特性：**
+- 🔍 **新增 `get_session_environment` 工具**
+  - 允许 AI 智能体主动探测终端的当前执行环境上下文。通过缓冲区启发式匹配，能够识别当前是否处于 Python、Node.js、MySQL、PostgreSQL 或标准的 Shell (bash/zsh) 环境中，避免发错指令。
+- 📦 **修复 NPM 发版配置**
+  - 修复 GitHub Actions 针对 NPM registry 推送 404 的问题，回退到传统的 `NODE_AUTH_TOKEN` 身份认证。
+
 ### v1.6.0 (2026-06-06)
 
 **🐛 问题修复：**

@@ -68,6 +68,7 @@ export class TerminalToolCategory extends BaseToolCategory {
         this.registerTool(this.createAbortCommandTool());
         this.registerTool(this.createGetCommandStatusTool());
         this.registerTool(this.createFocusPaneTool());
+        this.registerTool(this.createGetSessionEnvironmentTool());
 
         this.logger.info('Terminal tools initialized');
     }
@@ -624,6 +625,104 @@ Special keys: \\x03 (Ctrl+C), \\x04 (Ctrl+D), \\x1b (Escape), \\r (Enter)`,
                         }]
                     };
                 }
+            }
+        };
+    }
+
+    /**
+     * Tool: Get the current environment context of a session
+     */
+    private createGetSessionEnvironmentTool(): McpTool {
+        return {
+            name: 'get_session_environment',
+            description: `Get the environment context of a terminal session (e.g., bash, python, node, database REPL).
+Use this before sending complex commands to ensure the session is in the expected state.
+Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
+            schema: z.object({
+                sessionId: z.string().optional().describe('Stable session ID (recommended)'),
+                tabIndex: z.number().optional().describe('Tab index (legacy)'),
+                title: z.string().optional().describe('Match by title'),
+                profileName: z.string().optional().describe('Match by profile name')
+            }),
+            handler: async (params: { sessionId?: string; tabIndex?: number; title?: string; profileName?: string }) => {
+                const session = this.findSessionByLocator(params);
+
+                if (!session) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                error: 'No matching terminal session found',
+                                hint: 'Use get_session_list to see available sessions'
+                            })
+                        }]
+                    };
+                }
+
+                try {
+                    this.ensureSessionValid(session);
+                } catch (error: any) {
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }) }]
+                    };
+                }
+
+                const bufferContent = this.getTerminalBufferText(session);
+                const lines = bufferContent.split('\n').map(l => l.trimEnd()).filter(l => l.length > 0);
+                const lastLine = lines.length > 0 ? lines[lines.length - 1] : '';
+
+                // Heuristics for detecting current environment based on the last prompt line
+                let environment = 'unknown';
+                let isShell = false;
+
+                if (/>>>\s*$/.test(lastLine)) {
+                    environment = 'python';
+                } else if (/irb\(main\):.*\s*$/.test(lastLine) || /irb>\s*$/.test(lastLine)) {
+                    environment = 'ruby';
+                } else if (/>\s*$/.test(lastLine) && !/mysql>\s*$/.test(lastLine)) {
+                    environment = 'node'; // Note: '>' is a generic prompt, but Node uses it.
+                } else if (/mysql>\s*$/.test(lastLine)) {
+                    environment = 'mysql';
+                } else if (/\w+=>\s*$/.test(lastLine) || /\w+=#\s*$/.test(lastLine)) {
+                    environment = 'postgres';
+                } else if (/sqlite>\s*$/.test(lastLine)) {
+                    environment = 'sqlite';
+                } else if (/mongo>\s*$/.test(lastLine) || /Enterprise\s\w+-\w+>/.test(lastLine)) {
+                    environment = 'mongodb';
+                } else if (/127\.0\.0\.1:\d+>\s*$/.test(lastLine)) {
+                    environment = 'redis';
+                } else if (/\$\s*$/.test(lastLine) || /#\s*$/.test(lastLine) || /%\s*$/.test(lastLine) || /❯\s*$/.test(lastLine) || /➜\s*$/.test(lastLine)) {
+                    // Standard shell prompts usually end with $, #, %, ❯, or ➜
+                    isShell = true;
+                    environment = this.detectShellType(session);
+                } else {
+                    // Fallback: assume it's a shell if we can't match any specific REPL,
+                    // but still run detectShellType to see if there are profile/title hints.
+                    isShell = true;
+                    environment = this.detectShellType(session);
+                }
+
+                const tabAny = session.tab as any;
+                const profile = tabAny.profile ? {
+                    id: tabAny.profile.id,
+                    name: tabAny.profile.name,
+                    type: tabAny.profile.type
+                } : undefined;
+
+                return {
+                    content: [{
+                        type: 'text', text: JSON.stringify({
+                            success: true,
+                            sessionId: session.sessionId,
+                            environment,
+                            isShell,
+                            lastPrompt: lastLine,
+                            cwd: tabAny.session?.cwd,
+                            pid: tabAny.session?.pty?.pid,
+                            profile
+                        }, null, 2)
+                    }]
+                };
             }
         };
     }

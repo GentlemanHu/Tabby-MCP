@@ -2,6 +2,12 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.6.1] - 2026-06-06
+
+### ✨ Added
+- **`get_session_environment` tool**: Detects terminal execution context (e.g. bash, Python, Node, MySQL) using buffer heuristics, helping AI agents avoid sending incorrect interactive commands.
+- **Fixed NPM publish action**: Fallback to explicit tokens as strict OIDC configuration triggered E404s.
+
 ## [1.6.0] - 2026-06-06
 
 ### 🔧 Fixed

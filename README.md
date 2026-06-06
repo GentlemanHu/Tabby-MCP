@@ -381,6 +381,14 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.6.1 (2026-06-06)
+
+**✨ New Features:**
+- 🔍 **Added `get_session_environment` tool**
+  - Allows AI agents to actively probe the terminal context (e.g., detecting if the session is currently in a Python, Node.js, MySQL, PostgreSQL, or standard bash environment) using buffer heuristics.
+- 📦 **Fix NPM publish workflow**
+  - Use traditional `NODE_AUTH_TOKEN` in GitHub actions because OIDC Provenance returned persistent `404` errors under the registry configuration.
+
 ### v1.6.0 (2026-06-06)
 
 **🐛 Bug Fixes:**
