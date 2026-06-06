@@ -30,9 +30,6 @@
     "install-plugin": "bash scripts/install.sh",
     "uninstall-plugin": "bash scripts/uninstall.sh"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "files": [
     "dist",
     "typings"
