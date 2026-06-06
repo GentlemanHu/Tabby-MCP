@@ -7,6 +7,8 @@
 [![Tabby Plugin](https://img.shields.io/badge/Tabby-Plugin-purple.svg)](https://tabby.sh/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-orange.svg)](https://modelcontextprotocol.io/)
 [![GitHub Release](https://img.shields.io/github/v/release/GentlemanHu/Tabby-MCP?color=green)](https://github.com/GentlemanHu/Tabby-MCP/releases)
+[![npm version](https://img.shields.io/npm/v/tabby-mcp-server.svg?color=blue)](https://www.npmjs.com/package/tabby-mcp-server)
+[![npm downloads](https://img.shields.io/npm/dm/tabby-mcp-server.svg?color=blue)](https://www.npmjs.com/package/tabby-mcp-server)
 [![AI Generated](https://img.shields.io/badge/AI%20Generated-95%25-ff69b4.svg)](#-about-this-project)
 [![Tested on](https://img.shields.io/badge/Tested%20on-macOS-lightgrey.svg)](#%EF%B8%8F-platform-support)
 
@@ -272,7 +274,7 @@ For clients that don't support SSE, use the STDIO bridge:
 | `list_profiles` | List terminal profiles |
 | `open_profile` | Open tab with profile |
 | `show_profile_selector` | Show profile dialog |
-| `quick_connect` | SSH quick connect |
+| `quick_connect` | Smart quick connect (SSH/telnet/socket/serial) |
 
 ### SFTP Operations (12) 🆕
 
@@ -378,6 +380,18 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 ---
 
 ## 📝 Changelog
+
+### v1.6.0 (2026-06-06)
+
+**🐛 Bug Fixes:**
+- 🔧 **Fixed `quick_connect` false-success / protocol misrouting behavior** (refs #3, #5, #6)
+  - `quick_connect` now shares the same tab/session/ready response chain as `open_profile`
+  - Fixed top-level `tabId` / `tabIndex` reporting for newly opened tabs wrapped in `SplitTabComponent`
+  - `protocol="auto"` now prefers SSH for `user@host`-style targets instead of depending on provider registration order
+  - Added explicit protocol support for `ssh`, `telnet`, `socket`, and `serial` style quick-connect targets
+  - Removed stale SSH-only validation that incorrectly rejected non-SSH URI forms such as `telnet://...`
+- 🔧 **Improved plugin shutdown cleanup on app/window teardown** (refs #5)
+  - Added best-effort server stop on plugin/window unload to reduce port reuse problems after restart
 
 ### v1.5.1 (2026-04-03)
 

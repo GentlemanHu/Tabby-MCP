@@ -7,6 +7,8 @@
 [![Tabby Plugin](https://img.shields.io/badge/Tabby-Plugin-purple.svg)](https://tabby.sh/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-orange.svg)](https://modelcontextprotocol.io/)
 [![GitHub Release](https://img.shields.io/github/v/release/GentlemanHu/Tabby-MCP?color=green)](https://github.com/GentlemanHu/Tabby-MCP/releases)
+[![npm version](https://img.shields.io/npm/v/tabby-mcp-server.svg?color=blue)](https://www.npmjs.com/package/tabby-mcp-server)
+[![npm downloads](https://img.shields.io/npm/dm/tabby-mcp-server.svg?color=blue)](https://www.npmjs.com/package/tabby-mcp-server)
 [![AI Generated](https://img.shields.io/badge/AI%20生成-95%25-ff69b4.svg)](#-关于本项目)
 [![Tested on](https://img.shields.io/badge/已测试-macOS-lightgrey.svg)](#%EF%B8%8F-平台支持)
 
@@ -234,7 +236,7 @@ npm run build
 | `list_profiles` | 列出终端配置文件 |
 | `open_profile` | 使用配置文件打开标签页 |
 | `show_profile_selector` | 显示配置文件对话框 |
-| `quick_connect` | SSH 快速连接 |
+| `quick_connect` | 智能快速连接（SSH/telnet/socket/serial） |
 
 ### SFTP 操作（12 个）🆕
 
@@ -340,6 +342,18 @@ npm run build
 ---
 
 ## 📝 更新日志
+
+### v1.6.0 (2026-06-06)
+
+**🐛 问题修复：**
+- 🔧 **修复 `quick_connect` 假成功与协议误判问题**（引用 #3、#5、#6）
+  - `quick_connect` 现在与 `open_profile` 共用同一套 tab / session / ready 返回链路
+  - 修复新打开连接在 `SplitTabComponent` 包裹下返回错误 `tabId` / `tabIndex` 的问题
+  - `protocol="auto"` 现在会对 `user@host` 形式的目标优先按 SSH 解释，不再依赖 provider 注册顺序
+  - 新增显式协议支持：`ssh`、`telnet`、`socket`、`serial`
+  - 移除遗留的 SSH-only 参数校验，避免 `telnet://...` 这类 URI 被错误拒绝
+- 🔧 **改进插件退出清理逻辑**（引用 #5）
+  - 在插件/窗口卸载时尽力停止 MCP server，减少重启后端口残留问题
 
 ### v1.5.1 (2026-04-03)
 

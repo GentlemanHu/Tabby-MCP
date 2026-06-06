@@ -543,6 +543,18 @@ export class McpService {
      * Stop the MCP server
      */
     public async stopServer(): Promise<void> {
+        await this.stopServerInternal(false, 'manual stop');
+    }
+
+    /**
+     * Best-effort synchronous cleanup for window/application shutdown.
+     * Avoids awaiting async transport closes during unload while still releasing the port.
+     */
+    public stopServerSync(reason: string = 'shutdown'): void {
+        void this.stopServerInternal(true, reason);
+    }
+
+    private async stopServerInternal(forceImmediate: boolean, reason: string): Promise<void> {
         if (!this.isRunning) {
             this.logger.info('MCP server is not running');
             return;
@@ -560,14 +572,20 @@ export class McpService {
             this.legacyTransports = {};
 
             // Close all streamable transports
-            for (const [sessionId, transport] of Object.entries(this.streamableTransports)) {
+            for (const transport of Object.values(this.streamableTransports)) {
                 try {
-                    await transport.close();
+                    if (forceImmediate) {
+                        void transport.close().catch(() => undefined);
+                    } else {
+                        await transport.close();
+                    }
                 } catch (e) {
                     // Ignore close errors
                 }
             }
             this.streamableTransports = {};
+
+            this.sessionMetadata.clear();
 
             // Clear all per-session servers
             this.sessionServers = {};
@@ -584,14 +602,26 @@ export class McpService {
 
             // Close HTTP server
             if (this.httpServer) {
-                await new Promise<void>((resolve) => {
-                    this.httpServer!.close(() => resolve());
-                });
+                const server = this.httpServer;
                 this.httpServer = undefined;
+                this.isRunning = false;
+
+                if (forceImmediate) {
+                    try {
+                        server.close();
+                    } catch (e) {
+                        // Ignore close errors
+                    }
+                } else {
+                    await new Promise<void>((resolve) => {
+                        server.close(() => resolve());
+                    });
+                }
+            } else {
+                this.isRunning = false;
             }
 
-            this.isRunning = false;
-            this.logger.info('MCP server stopped');
+            this.logger.info(`MCP server stopped (${reason})`);
         } catch (err) {
             this.logger.error('Error stopping MCP server:', err);
             throw err;

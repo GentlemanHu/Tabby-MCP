@@ -1,11 +1,11 @@
 {
   "name": "tabby-mcp-server",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "MCP (Model Context Protocol) server plugin for Tabby terminal - Complete terminal control with 34 MCP tools including SFTP file transfer",
   "homepage": "https://github.com/GentlemanHu/Tabby-MCP",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GentlemanHu/Tabby-MCP.git"
+    "url": "git+https://github.com/GentlemanHu/Tabby-MCP.git"
   },
   "bugs": {
     "url": "https://github.com/GentlemanHu/Tabby-MCP/issues"
@@ -29,6 +29,10 @@
     "watch": "webpack --progress --color --watch",
     "install-plugin": "bash scripts/install.sh",
     "uninstall-plugin": "bash scripts/uninstall.sh"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",

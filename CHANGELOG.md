@@ -2,6 +2,18 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.6.0] - 2026-06-06
+
+### 🔧 Fixed
+- **`quick_connect` false success / wrong protocol selection** (refs #3, #5, #6)
+  - `quick_connect` now reuses the same tab/session/ready response chain as `open_profile`
+  - Fixed top-level `tabId` / `tabIndex` reporting for tabs wrapped by `SplitTabComponent`
+  - `protocol="auto"` now prefers SSH for `user@host` targets instead of depending on provider registration order
+  - Added explicit protocol selection support for `ssh`, `telnet`, `socket`, and `serial`
+  - Removed stale SSH-only validation that incorrectly rejected non-SSH URI forms
+- **Plugin shutdown cleanup** (refs #5)
+  - Added best-effort MCP server stop during plugin/window unload to reduce restart-time port conflicts
+
 ## [1.3.0] - 2026-02-04
 
 ### 🔧 Fixed

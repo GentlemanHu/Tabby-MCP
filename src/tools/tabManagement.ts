@@ -151,6 +151,321 @@ export class TabManagementToolCategory extends BaseToolCategory {
         return null;
     }
 
+    private getQuickConnectProviders(): any[] {
+        return this.profilesService.getProviders().filter(provider => provider.supportsQuickConnect);
+    }
+
+    private getQuickConnectProvider(providerId: string): any | null {
+        return this.getQuickConnectProviders().find(provider => provider.id === providerId) ?? null;
+    }
+
+    private buildSshQuickConnectProfile(query: string): any | null {
+        let user: string | undefined = undefined;
+        let host = query;
+        let port = 22;
+
+        if (!host.trim()) {
+            return null;
+        }
+
+        if (host.includes('@')) {
+            const parts = host.split(/@/g);
+            host = parts[parts.length - 1];
+            user = parts.slice(0, parts.length - 1).join('@') || undefined;
+        }
+
+        if (host.includes('[')) {
+            const closeBracketIndex = host.indexOf(']');
+            if (closeBracketIndex === -1) {
+                return null;
+            }
+            const portPart = host.slice(closeBracketIndex + 1);
+            if (portPart.startsWith(':') && portPart.length > 1) {
+                const parsedPort = Number(portPart.slice(1));
+                if (!Number.isFinite(parsedPort) || parsedPort <= 0) {
+                    return null;
+                }
+                port = parsedPort;
+            }
+            host = host.slice(1, closeBracketIndex);
+        } else if (host.includes(':')) {
+            const parts = host.split(/:/g);
+            if (parts.length !== 2 || !parts[0]) {
+                return null;
+            }
+            const parsedPort = Number(parts[1]);
+            if (!Number.isFinite(parsedPort) || parsedPort <= 0) {
+                return null;
+            }
+            host = parts[0];
+            port = parsedPort;
+        }
+
+        if (!host.trim()) {
+            return null;
+        }
+
+        return {
+            name: query,
+            type: 'ssh',
+            options: {
+                host,
+                user,
+                port,
+            },
+        };
+    }
+
+    private resolveQuickConnectTarget(
+        query: string,
+        protocol: 'auto' | 'ssh' | 'telnet' | 'socket' | 'serial' = 'auto'
+    ): { provider: any | null; normalizedQuery: string; resolvedProtocol: string; error?: string; hint?: string } {
+        const providers = this.getQuickConnectProviders();
+        const providerIds = providers.map(provider => provider.id).sort();
+
+        const explicitProtocolMatch = query.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
+        let normalizedQuery = query.trim();
+        let requestedProtocol = protocol;
+
+        if (explicitProtocolMatch) {
+            const scheme = explicitProtocolMatch[1].toLowerCase();
+            const body = explicitProtocolMatch[2];
+            if (scheme === 'ssh' || scheme === 'telnet' || scheme === 'socket' || scheme === 'serial') {
+                requestedProtocol = scheme as 'ssh' | 'telnet' | 'socket' | 'serial';
+                normalizedQuery = body;
+            }
+        }
+
+        if (requestedProtocol !== 'auto') {
+            if (requestedProtocol === 'ssh') {
+                return { provider: this.getQuickConnectProvider('ssh'), normalizedQuery, resolvedProtocol: 'ssh' };
+            }
+
+            const provider = this.getQuickConnectProvider(requestedProtocol);
+            return provider
+                ? { provider, normalizedQuery, resolvedProtocol: requestedProtocol }
+                : {
+                    provider: null,
+                    normalizedQuery,
+                    resolvedProtocol: requestedProtocol,
+                    error: `Quick connect protocol \"${requestedProtocol}\" is unavailable`,
+                    hint: providerIds.length
+                        ? `Available quick-connect providers: ${providerIds.join(', ')}`
+                        : 'No quick-connect providers are currently available.'
+                };
+        }
+
+        const sshProvider = this.getQuickConnectProvider('ssh');
+        const telnetProvider = this.getQuickConnectProvider('telnet');
+        const socketProvider = this.getQuickConnectProvider('socket');
+        const serialProvider = this.getQuickConnectProvider('serial');
+
+        const looksLikeSerial = /^(COM\d+|\/dev\/(tty|cu)\S+)$/i.test(normalizedQuery);
+        if (looksLikeSerial && serialProvider) {
+            return { provider: serialProvider, normalizedQuery, resolvedProtocol: 'serial' };
+        }
+
+        const looksLikeSsh = normalizedQuery.includes('@');
+        if (looksLikeSsh) {
+            return { provider: sshProvider, normalizedQuery, resolvedProtocol: 'ssh' };
+        }
+
+        const ipv6WithPort = normalizedQuery.match(/^\[.+\]:(\d+)$/);
+        const hostWithPort = normalizedQuery.match(/^[^:@]+:(\d+)$/);
+        const portMatch = ipv6WithPort ?? hostWithPort;
+        if (portMatch) {
+            const port = Number(portMatch[1]);
+            if (port === 22) {
+                return { provider: sshProvider, normalizedQuery, resolvedProtocol: 'ssh' };
+            }
+            if (port === 23 && telnetProvider) {
+                return { provider: telnetProvider, normalizedQuery, resolvedProtocol: 'telnet' };
+            }
+            if (socketProvider) {
+                return { provider: socketProvider, normalizedQuery, resolvedProtocol: 'socket' };
+            }
+            if (telnetProvider) {
+                return { provider: telnetProvider, normalizedQuery, resolvedProtocol: 'telnet' };
+            }
+            if (sshProvider) {
+                return { provider: sshProvider, normalizedQuery, resolvedProtocol: 'ssh' };
+            }
+        }
+
+        if (providers.length === 1) {
+            return { provider: providers[0], normalizedQuery, resolvedProtocol: providers[0].id };
+        }
+
+        if (sshProvider) {
+            return { provider: sshProvider, normalizedQuery, resolvedProtocol: 'ssh' };
+        }
+
+        return {
+            provider: null,
+            normalizedQuery,
+            resolvedProtocol: 'auto',
+            error: 'Ambiguous quick connect target',
+            hint: providerIds.length
+                ? `Specify protocol explicitly (ssh://, telnet://, socket://, serial://) or use protocol=. Available providers: ${providerIds.join(', ')}`
+                : 'No quick-connect providers are currently available.'
+        };
+    }
+
+    private async openProfileTabAndBuildResponse(
+        profile: any,
+        params: { waitForReady?: boolean; timeout?: number },
+        sourceLabel: 'open_profile' | 'quick_connect'
+    ): Promise<any> {
+        const timeout = params?.timeout ?? 30000;
+
+        this.logger.info(`[${sourceLabel}] Opening profile: ${profile.name} (type: ${profile.type})`);
+        const tab = await this.profilesService.openNewTabForProfile(profile);
+
+        if (!tab) {
+            this.logger.error(`[${sourceLabel}] Failed to open profile: ${profile.name}`);
+            return {
+                content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Failed to open profile' }) }]
+            };
+        }
+
+        const topLevelTab = this.app.getParentTab(tab) ?? tab;
+        const tabId = this.getOrCreateTabId(topLevelTab);
+        const tabIndex = this.app.tabs.indexOf(topLevelTab);
+        const isSSH = profile.type === 'ssh' || profile.type?.includes('ssh');
+        const waitForReady = params?.waitForReady ?? isSSH;
+
+        let sessionId: string | undefined;
+        if (tab instanceof BaseTerminalTabComponent) {
+            sessionId = this.terminalTools.getOrCreateSessionId(tab);
+            this.logger.debug(`[${sourceLabel}] SessionId assigned: ${sessionId}`);
+        }
+
+        if (!sessionId) {
+            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+            this.logger.warn(`[${sourceLabel}] Tab is not BaseTerminalTabComponent, generated fallback sessionId: ${sessionId}`);
+        }
+
+        if (waitForReady) {
+            const timing = this.config.store.mcp?.timing || {};
+            const sessionPollInterval = timing.sessionPollInterval ?? 200;
+            const sessionStableChecks = timing.sessionStableChecks ?? 5;
+
+            const startTime = Date.now();
+            let tabReady = false;
+            let sshConnected = false;
+            let lastBufferLength = 0;
+            let stableCount = 0;
+
+            this.logger.debug(`[${sourceLabel}] Waiting for ready (isSSH=${isSSH}, timeout=${timeout}ms)`);
+
+            while (Date.now() - startTime < timeout) {
+                const tabAny = tab as any;
+                const frontendReady = tabAny.frontend !== undefined;
+                const sessionReady = tabAny.sessionReady === true;
+                const sessionOpen = tabAny.session?.open === true;
+
+                if (isSSH) {
+                    const sshSession = tabAny.sshSession;
+                    if (sshSession && sshSession.open === true) {
+                        sshConnected = true;
+                        tabReady = true;
+                        this.logger.info(`[${sourceLabel}] SSH session connected: ${profile.name}`);
+                        break;
+                    }
+                } else {
+                    if (sessionOpen || (frontendReady && sessionReady)) {
+                        tabReady = true;
+                        break;
+                    }
+                }
+
+                let bufferLength = 0;
+                try {
+                    const xterm = tabAny.frontend?.xterm;
+                    if (xterm?.buffer?.active) {
+                        bufferLength = xterm.buffer.active.length;
+                    }
+                } catch (e) {
+                    // Ignore buffer access errors
+                }
+
+                if (!isSSH) {
+                    if (bufferLength > 0 && bufferLength === lastBufferLength) {
+                        stableCount++;
+                        if (stableCount >= sessionStableChecks) {
+                            tabReady = true;
+                            break;
+                        }
+                    } else {
+                        stableCount = 0;
+                        lastBufferLength = bufferLength;
+                    }
+                } else if (bufferLength !== lastBufferLength) {
+                    lastBufferLength = bufferLength;
+                    this.logger.debug(`[${sourceLabel}] SSH buffer activity: ${bufferLength} chars`);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, sessionPollInterval));
+            }
+
+            const elapsed = Date.now() - startTime;
+            const ready = isSSH ? (tabReady && sshConnected) : tabReady;
+
+            this.logger.info(`[${sourceLabel}] Profile opened: ${profile.name} (tabReady=${tabReady}, sshConnected=${sshConnected}, ready=${ready}, elapsed=${elapsed}ms)`);
+
+            return {
+                content: [{
+                    type: 'text', text: JSON.stringify({
+                        success: true,
+                        sessionId,
+                        tabId,
+                        tabIndex,
+                        tabTitle: tab.title,
+                        profileName: profile.name,
+                        profileType: profile.type,
+                        tabReady,
+                        sshConnected: isSSH ? sshConnected : undefined,
+                        ready,
+                        elapsed: `${elapsed}ms`,
+                        message: ready
+                            ? `Profile ready: ${profile.name}`
+                            : tabReady && !sshConnected
+                                ? `Tab opened but SSH not connected: ${profile.name}`
+                                : `Profile opened but not fully ready: ${profile.name}`,
+                        hint: ready
+                            ? 'Use sessionId with exec_command, SFTP tools, etc.'
+                            : 'Session may not be fully connected. Check sshConnected status.'
+                    })
+                }]
+            };
+        }
+
+        this.logger.info(`[${sourceLabel}] Profile opened (no wait): ${profile.name}`);
+        return {
+            content: [{
+                type: 'text', text: JSON.stringify({
+                    success: true,
+                    sessionId,
+                    tabId,
+                    tabIndex,
+                    tabTitle: tab.title,
+                    profileName: profile.name,
+                    profileType: profile.type,
+                    tabReady: undefined,
+                    sshConnected: undefined,
+                    ready: false,
+                    message: `Opened profile: ${profile.name}`,
+                    note: 'Profile opened without waiting. Use get_session_list to check status.',
+                    hint: 'Use sessionId with exec_command, SFTP tools, etc.'
+                })
+            }]
+        };
+    }
+
     private createListTabsTool(): McpTool {
         return {
             name: 'list_tabs',
@@ -533,181 +848,7 @@ NOTE: This opens a NEW tab. For existing connections, use get_session_list + exe
                         };
                     }
 
-                    this.logger.info(`[open_profile] Opening profile: ${profile.name} (type: ${profile.type})`);
-                    const tab = await this.profilesService.openNewTabForProfile(profile);
-
-                    if (tab) {
-                        const tabId = this.getOrCreateTabId(tab);
-                        const tabIndex = this.app.tabs.indexOf(tab);
-                        const isSSH = profile.type === 'ssh' || profile.type?.includes('ssh');
-
-                        // Determine default waitForReady based on profile type
-                        const waitForReady = params?.waitForReady ?? isSSH;
-
-                        // Get sessionId from TerminalToolCategory's registry
-                        // CRITICAL: Call getOrCreateSessionId DIRECTLY on the tab object
-                        // DO NOT use findTerminalSessions() as the tab may not yet be in app.tabs
-                        let sessionId: string | undefined;
-                        if (tab instanceof BaseTerminalTabComponent) {
-                            // Direct call to getOrCreateSessionId ensures the same ID is registered
-                            sessionId = this.terminalTools.getOrCreateSessionId(tab);
-                            this.logger.debug(`[open_profile] SessionId assigned: ${sessionId}`);
-                        }
-                        // Fallback: generate UUID if not a terminal tab (shouldn't happen)
-                        if (!sessionId) {
-                            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-                                const r = Math.random() * 16 | 0;
-                                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                                return v.toString(16);
-                            });
-                            this.logger.warn(`[open_profile] Tab is not BaseTerminalTabComponent, generated fallback sessionId: ${sessionId}`);
-                        }
-
-                        if (waitForReady) {
-                            // Wait for the terminal session to be fully connected
-                            const timing = this.config.store.mcp?.timing || {};
-                            const sessionPollInterval = timing.sessionPollInterval ?? 200;
-                            const sessionStableChecks = timing.sessionStableChecks ?? 5;
-
-                            const startTime = Date.now();
-                            let tabReady = false;
-                            let sshConnected = false;
-                            let lastBufferLength = 0;
-                            let stableCount = 0;
-
-                            this.logger.debug(`[open_profile] Waiting for ready (isSSH=${isSSH}, timeout=${timeout}ms)`);
-
-                            while (Date.now() - startTime < timeout) {
-                                const tabAny = tab as any;
-
-                                // Check 1: Tab/Terminal Ready indicators
-                                const frontendReady = tabAny.frontend !== undefined;
-                                const sessionReady = tabAny.sessionReady === true;
-                                const hasSession = tabAny.session !== undefined;
-                                const sessionOpen = tabAny.session?.open === true;
-
-                                // Check 2: SSH-specific indicators (only for SSH profiles)
-                                if (isSSH) {
-                                    const sshSession = tabAny.sshSession;
-                                    if (sshSession && sshSession.open === true) {
-                                        sshConnected = true;
-                                        tabReady = true;
-                                        this.logger.info(`[open_profile] SSH session connected: ${profile.name}`);
-                                        break;
-                                    }
-                                } else {
-                                    // For non-SSH, consider ready when session is open
-                                    if (sessionOpen || (frontendReady && sessionReady)) {
-                                        tabReady = true;
-                                        break;
-                                    }
-                                }
-
-                                // Check 3: Buffer stability (fallback indicator)
-                                // NOTE: For SSH, buffer stability alone is NOT sufficient!
-                                // SSH may show connection prompts before actually authenticating.
-                                let bufferLength = 0;
-                                try {
-                                    const xterm = tabAny.frontend?.xterm;
-                                    if (xterm?.buffer?.active) {
-                                        bufferLength = xterm.buffer.active.length;
-                                    }
-                                } catch (e) {
-                                    // Ignore buffer access errors
-                                }
-
-                                // For SSH: Only use buffer stability as exit AFTER sshConnected
-                                // For non-SSH: Buffer stability can be used as ready indicator
-                                if (!isSSH) {
-                                    // Non-SSH: Buffer stability = ready
-                                    if (bufferLength > 0 && bufferLength === lastBufferLength) {
-                                        stableCount++;
-                                        if (stableCount >= sessionStableChecks) {
-                                            tabReady = true;
-                                            break;
-                                        }
-                                    } else {
-                                        stableCount = 0;
-                                        lastBufferLength = bufferLength;
-                                    }
-                                } else {
-                                    // SSH: Keep checking sshSession.open in the loop above
-                                    // Buffer stability alone should NOT trigger exit for SSH
-                                    // Just track the buffer for debugging
-                                    if (bufferLength !== lastBufferLength) {
-                                        lastBufferLength = bufferLength;
-                                        this.logger.debug(`[open_profile] SSH buffer activity: ${bufferLength} chars`);
-                                    }
-                                }
-
-                                await new Promise(resolve => setTimeout(resolve, sessionPollInterval));
-                            }
-
-                            const elapsed = Date.now() - startTime;
-
-                            // Determine final ready state:
-                            // - For SSH: ready = tabReady AND sshConnected
-                            // - For non-SSH: ready = tabReady
-                            const ready = isSSH ? (tabReady && sshConnected) : tabReady;
-
-                            this.logger.info(`[open_profile] Profile opened: ${profile.name} (tabReady=${tabReady}, sshConnected=${sshConnected}, ready=${ready}, elapsed=${elapsed}ms)`);
-
-                            return {
-                                content: [{
-                                    type: 'text', text: JSON.stringify({
-                                        success: true,
-                                        sessionId,
-                                        tabId,
-                                        tabIndex,
-                                        tabTitle: tab.title,
-                                        profileName: profile.name,
-                                        profileType: profile.type,
-                                        // State fields with clear semantics:
-                                        tabReady,           // Tab/frontend initialized
-                                        sshConnected: isSSH ? sshConnected : undefined,  // SSH connection established (SSH only)
-                                        ready,              // OVERALL ready state: can start using this session
-                                        elapsed: `${elapsed}ms`,
-                                        message: ready
-                                            ? `Profile ready: ${profile.name}`
-                                            : tabReady && !sshConnected
-                                                ? `Tab opened but SSH not connected: ${profile.name}`
-                                                : `Profile opened but not fully ready: ${profile.name}`,
-                                        hint: ready
-                                            ? 'Use sessionId with exec_command, SFTP tools, etc.'
-                                            : 'Session may not be fully connected. Check sshConnected status.'
-                                    })
-                                }]
-                            };
-                        }
-
-                        // No waiting - return immediately
-                        this.logger.info(`[open_profile] Profile opened (no wait): ${profile.name}`);
-                        return {
-                            content: [{
-                                type: 'text', text: JSON.stringify({
-                                    success: true,
-                                    sessionId,
-                                    tabId,
-                                    tabIndex,
-                                    tabTitle: tab.title,
-                                    profileName: profile.name,
-                                    profileType: profile.type,
-                                    // State fields (unknown since we didn't wait)
-                                    tabReady: undefined,    // Unknown - didn't wait
-                                    sshConnected: undefined, // Unknown - didn't wait
-                                    ready: false,           // Not verified as ready
-                                    message: `Opened profile: ${profile.name}`,
-                                    note: 'Profile opened without waiting. Use get_session_list to check status.',
-                                    hint: 'Use sessionId with exec_command, SFTP tools, etc.'
-                                })
-                            }]
-                        };
-                    } else {
-                        this.logger.error(`[open_profile] Failed to open profile: ${profile.name}`);
-                        return {
-                            content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Failed to open profile' }) }]
-                        };
-                    }
+                    return await this.openProfileTabAndBuildResponse(profile, params, 'open_profile');
                 } catch (error: any) {
                     this.logger.error('[open_profile] Error:', error);
                     return {
@@ -766,17 +907,26 @@ Use list_profiles + open_profile for programmatic profile opening instead.`,
     private createQuickConnectTool(): McpTool {
         return {
             name: 'quick_connect',
-            description: `Quick SSH connection - creates a NEW tab with temporary profile.
+            description: `Quick connection - creates a NEW tab using the best matching provider.
 
 IMPORTANT: This creates a NEW connection and tab, does NOT reuse existing sessions.
 - For new connections: Use this or open_profile
 - For existing sessions: Use get_session_list to find sessions, then exec_command
+- Uses the same tab/session/ready return chain as open_profile
+- protocol='auto' prefers SSH for user@host style input instead of relying on provider order
 
-Example: quick_connect(query="root@192.168.1.1") or quick_connect(query="user@host:2222")`,
+Examples:
+- quick_connect(query="root@192.168.1.1")
+- quick_connect(query="user@host:2222")
+- quick_connect(query="telnet://host:23", protocol="auto")
+- quick_connect(query="host:9000", protocol="socket")`,
             schema: z.object({
-                query: z.string().describe('SSH string: "user@host" or "user@host:port"')
+                query: z.string().describe('Connection target, e.g. user@host, user@host:port, telnet://host:23, socket://host:9000, serial:///dev/ttyUSB0'),
+                protocol: z.enum(['auto', 'ssh', 'telnet', 'socket', 'serial']).optional().describe('Protocol selection strategy (default: auto)'),
+                waitForReady: z.boolean().optional().describe('Wait for connection readiness (default: true for SSH, false for most others)'),
+                timeout: z.number().optional().describe('Timeout in ms when waiting (default: 30000)')
             }),
-            handler: async (params: { query: string }) => {
+            handler: async (params: { query: string; protocol?: 'auto' | 'ssh' | 'telnet' | 'socket' | 'serial'; waitForReady?: boolean; timeout?: number }) => {
                 // Debug: log received params
                 this.logger.debug(`quick_connect received params: ${JSON.stringify(params)}`);
 
@@ -798,34 +948,45 @@ Example: quick_connect(query="root@192.168.1.1") or quick_connect(query="user@ho
                     };
                 }
 
-                // Validate query format (basic check)
-                if (!query.includes('@')) {
-                    return {
-                        content: [{
-                            type: 'text',
-                            text: JSON.stringify({
-                                success: false,
-                                error: 'Invalid connection string format',
-                                hint: 'Use format "user@host" or "user@host:port"',
-                                received: query
-                            })
-                        }]
-                    };
-                }
-
                 try {
-                    const profile = await this.profilesService.quickConnect(query);
+                    const resolution = this.resolveQuickConnectTarget(query, params?.protocol ?? 'auto');
 
-                    if (profile) {
-                        this.logger.info(`Quick connect to: ${query}`);
+                    if (!resolution.provider && resolution.resolvedProtocol !== 'ssh') {
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Connected to: ${query}`, profile: profile.name }) }]
-                        };
-                    } else {
-                        return {
-                            content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Quick connect failed - no profile returned' }) }]
+                            content: [{
+                                type: 'text', text: JSON.stringify({
+                                    success: false,
+                                    error: resolution.error || 'Quick connect target could not be resolved',
+                                    hint: resolution.hint
+                                })
+                            }]
                         };
                     }
+
+                    const profile = resolution.resolvedProtocol === 'ssh'
+                        ? this.buildSshQuickConnectProfile(resolution.normalizedQuery)
+                        : resolution.provider!.quickConnect(resolution.normalizedQuery);
+
+                    if (!profile) {
+                        return {
+                            content: [{
+                                type: 'text', text: JSON.stringify({
+                                    success: false,
+                                    error: `Invalid ${resolution.resolvedProtocol} quick connect target`,
+                                    hint: resolution.resolvedProtocol === 'ssh'
+                                        ? 'Use format user@host, user@host:port, ssh://user@host, or ssh://user@host:port'
+                                        : resolution.resolvedProtocol === 'telnet'
+                                            ? 'Use format host:port or telnet://host:port'
+                                            : resolution.resolvedProtocol === 'socket'
+                                                ? 'Use format host:port or socket://host:port'
+                                                : 'Use format COM3, /dev/ttyUSB0, or serial:///dev/ttyUSB0'
+                                })
+                            }]
+                        };
+                    }
+
+                    profile.type = profile.type || resolution.resolvedProtocol;
+                    return await this.openProfileTabAndBuildResponse(profile, params, 'quick_connect');
                 } catch (error: any) {
                     this.logger.error('Error with quick connect:', error);
                     return {

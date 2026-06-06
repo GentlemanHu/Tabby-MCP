@@ -1,4 +1,4 @@
-import { NgModule } from '@angular/core';
+import { NgModule, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import TabbyCoreModule, {
@@ -6,11 +6,11 @@ import TabbyCoreModule, {
     ConfigProvider,
     ConfigService,
     ToolbarButtonProvider,
-    HostWindowService,
     ProfilesService
 } from 'tabby-core';
 import { SettingsTabProvider } from 'tabby-settings';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
+import { Subscription } from 'rxjs';
 
 // Services
 import { McpService } from './services/mcpService';
@@ -61,8 +61,10 @@ import './styles.scss';
         McpSettingsTabComponent
     ]
 })
-export default class McpModule {
+export default class McpModule implements OnDestroy {
     private initialized = false;
+    private appReadySubscription?: Subscription;
+    private shutdownInProgress = false;
 
     constructor(
         private app: AppService,
@@ -86,11 +88,16 @@ export default class McpModule {
         }
 
         // Initialize server after app is ready
-        this.app.ready$.subscribe(() => {
+        this.appReadySubscription = this.app.ready$.subscribe(() => {
             this.config.ready$.toPromise().then(() => {
                 this.initializeOnBoot();
             });
         });
+
+        if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', this.handleBeforeUnload);
+            window.addEventListener('unload', this.handleBeforeUnload);
+        }
     }
 
     /**
@@ -120,6 +127,32 @@ export default class McpModule {
         } catch (error) {
             this.logger.error('Failed to start MCP server on boot:', error);
         }
+    }
+
+    ngOnDestroy(): void {
+        this.appReadySubscription?.unsubscribe();
+
+        if (typeof window !== 'undefined') {
+            window.removeEventListener('beforeunload', this.handleBeforeUnload);
+            window.removeEventListener('unload', this.handleBeforeUnload);
+        }
+
+        this.shutdownServer('module destroy');
+    }
+
+    private handleBeforeUnload = (): void => {
+        this.shutdownServer('window unload');
+    };
+
+    private shutdownServer(reason: string): void {
+        if (this.shutdownInProgress || !this.mcpService.isServerRunning()) {
+            return;
+        }
+
+        this.shutdownInProgress = true;
+        this.logger.info(`Stopping MCP server due to ${reason}...`);
+
+        this.mcpService.stopServerSync(reason);
     }
 }
 
