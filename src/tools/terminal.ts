@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { AppService, BaseTabComponent, ConfigService, SplitTabComponent } from 'tabby-core';
 import { BaseTerminalTabComponent, XTermFrontend } from 'tabby-terminal';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import stripAnsi from 'strip-ansi';
 import { BehaviorSubject, Subscription, Subject, ReplaySubject, firstValueFrom } from 'rxjs';
 import { z } from 'zod';
 import { BaseToolCategory } from './base-tool-category';
@@ -629,6 +630,74 @@ Special keys: \\x03 (Ctrl+C), \\x04 (Ctrl+D), \\x1b (Escape), \\r (Enter)`,
         };
     }
 
+    private parseEnvironmentFromBuffer(
+        session: TerminalSessionWithTab,
+        bufferContent: string,
+        useEnhancedHeuristics: boolean
+    ): { environment: string; isShell: boolean; promptRaw: string; promptClean: string } {
+        const normalizedLines = bufferContent
+            .split('\n')
+            .map(line => {
+                const raw = line.trimEnd();
+                const clean = useEnhancedHeuristics
+                    ? stripAnsi(raw).replace(/\[[0-9;?]*[a-zA-Z]/g, '').trim()
+                    : raw.trim();
+                return { raw, clean };
+            })
+            .filter(line => line.raw.length > 0 || line.clean.length > 0);
+
+        const replMatchers: Array<{ environment: string; pattern: RegExp }> = [
+            { environment: 'python', pattern: /^>>>$/ },
+            { environment: 'ruby', pattern: /^(irb>|irb\(main\):.*)$/ },
+            { environment: 'mysql', pattern: /^mysql>$/ },
+            { environment: 'postgres', pattern: /^(postgres[=#>-]?|\w+=>|\w+=#)$/ },
+            { environment: 'sqlite', pattern: /^sqlite>$/ },
+            { environment: 'mongodb', pattern: /^(mongo>|mongosh>|Enterprise\s.+>)$/ },
+            { environment: 'redis', pattern: /^127\.0\.0\.1:\d+>$/ },
+            { environment: 'node', pattern: /^>$/ },
+        ];
+
+        let environment = 'unknown';
+        let isShell = false;
+        let promptRaw = '';
+        let promptClean = '';
+        const fallbackLine = normalizedLines.length > 0 ? normalizedLines[normalizedLines.length - 1] : { raw: '', clean: '' };
+
+        for (let i = normalizedLines.length - 1; i >= 0; i--) {
+            const candidate = normalizedLines[i];
+            if (!candidate.clean) {
+                continue;
+            }
+
+            const replMatch = replMatchers.find(m => m.pattern.test(candidate.clean));
+            if (replMatch) {
+                environment = replMatch.environment;
+                promptRaw = candidate.raw;
+                promptClean = candidate.clean;
+                break;
+            }
+
+            if (/[$#%❯➜]\s*$/.test(candidate.clean)) {
+                isShell = true;
+                const detectedShell = this.detectShellType(session);
+                environment = detectedShell === 'sh' ? 'shell' : detectedShell;
+                promptRaw = candidate.raw;
+                promptClean = candidate.clean;
+                break;
+            }
+        }
+
+        if (!promptRaw) {
+            isShell = true;
+            const detectedShell = this.detectShellType(session);
+            environment = detectedShell === 'sh' ? 'shell' : detectedShell;
+            promptRaw = fallbackLine.raw;
+            promptClean = fallbackLine.clean;
+        }
+
+        return { environment, isShell, promptRaw, promptClean };
+    }
+
     /**
      * Tool: Get the current environment context of a session
      */
@@ -645,6 +714,20 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                 profileName: z.string().optional().describe('Match by profile name')
             }),
             handler: async (params: { sessionId?: string; tabIndex?: number; title?: string; profileName?: string }) => {
+                const environmentDetectionConfig = this.config.store.mcp?.environmentDetection;
+                if (environmentDetectionConfig?.enabled === false) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                enabled: false,
+                                error: 'Environment detection is disabled in Settings → MCP',
+                                hint: 'Enable Environment Detection in the MCP settings page before using get_session_environment.'
+                            })
+                        }]
+                    };
+                }
+
                 const session = this.findSessionByLocator(params);
 
                 if (!session) {
@@ -667,39 +750,67 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                     };
                 }
 
+                const useEnhancedHeuristics = environmentDetectionConfig?.useEnhancedHeuristics !== false;
+                const detectionMode = environmentDetectionConfig?.mode ?? 'heuristic';
                 const bufferContent = this.getTerminalBufferText(session);
-                const lines = bufferContent.split('\n').map(l => l.trimEnd()).filter(l => l.length > 0);
-                const lastLine = lines.length > 0 ? lines[lines.length - 1] : '';
+                const normalizedLines = bufferContent
+                    .split('\n')
+                    .map(line => {
+                        const raw = line.trimEnd();
+                        const clean = useEnhancedHeuristics
+                            ? stripAnsi(raw).replace(/\[[0-9;?]*[a-zA-Z]/g, '').trim()
+                            : raw.trim();
+                        return { raw, clean };
+                    })
+                    .filter(line => line.raw.length > 0 || line.clean.length > 0);
 
-                // Heuristics for detecting current environment based on the last prompt line
+                const replMatchers: Array<{ environment: string; pattern: RegExp }> = [
+                    { environment: 'python', pattern: /^>>>$/ },
+                    { environment: 'ruby', pattern: /^(irb>|irb\(main\):.*)$/ },
+                    { environment: 'mysql', pattern: /^mysql>$/ },
+                    { environment: 'postgres', pattern: /^(postgres[=#>-]?|\w+=>|\w+=#)$/ },
+                    { environment: 'sqlite', pattern: /^sqlite>$/ },
+                    { environment: 'mongodb', pattern: /^(mongo>|mongosh>|Enterprise\s.+>)$/ },
+                    { environment: 'redis', pattern: /^127\.0\.0\.1:\d+>$/ },
+                    { environment: 'node', pattern: /^>$/ },
+                ];
+
                 let environment = 'unknown';
                 let isShell = false;
+                let promptRaw = '';
+                let promptClean = '';
+                const fallbackLine = normalizedLines.length > 0 ? normalizedLines[normalizedLines.length - 1] : { raw: '', clean: '' };
 
-                if (/>>>\s*$/.test(lastLine)) {
-                    environment = 'python';
-                } else if (/irb\(main\):.*\s*$/.test(lastLine) || /irb>\s*$/.test(lastLine)) {
-                    environment = 'ruby';
-                } else if (/>\s*$/.test(lastLine) && !/mysql>\s*$/.test(lastLine)) {
-                    environment = 'node'; // Note: '>' is a generic prompt, but Node uses it.
-                } else if (/mysql>\s*$/.test(lastLine)) {
-                    environment = 'mysql';
-                } else if (/\w+=>\s*$/.test(lastLine) || /\w+=#\s*$/.test(lastLine)) {
-                    environment = 'postgres';
-                } else if (/sqlite>\s*$/.test(lastLine)) {
-                    environment = 'sqlite';
-                } else if (/mongo>\s*$/.test(lastLine) || /Enterprise\s\w+-\w+>/.test(lastLine)) {
-                    environment = 'mongodb';
-                } else if (/127\.0\.0\.1:\d+>\s*$/.test(lastLine)) {
-                    environment = 'redis';
-                } else if (/\$\s*$/.test(lastLine) || /#\s*$/.test(lastLine) || /%\s*$/.test(lastLine) || /❯\s*$/.test(lastLine) || /➜\s*$/.test(lastLine)) {
-                    // Standard shell prompts usually end with $, #, %, ❯, or ➜
+                for (let i = normalizedLines.length - 1; i >= 0; i--) {
+                    const candidate = normalizedLines[i];
+                    if (!candidate.clean) {
+                        continue;
+                    }
+
+                    const replMatch = replMatchers.find(m => m.pattern.test(candidate.clean));
+                    if (replMatch) {
+                        environment = replMatch.environment;
+                        promptRaw = candidate.raw;
+                        promptClean = candidate.clean;
+                        break;
+                    }
+
+                    if (/[$#%❯➜]\s*$/.test(candidate.clean)) {
+                        isShell = true;
+                        const detectedShell = this.detectShellType(session);
+                        environment = detectedShell === 'sh' ? 'shell' : detectedShell;
+                        promptRaw = candidate.raw;
+                        promptClean = candidate.clean;
+                        break;
+                    }
+                }
+
+                if (!promptRaw) {
                     isShell = true;
-                    environment = this.detectShellType(session);
-                } else {
-                    // Fallback: assume it's a shell if we can't match any specific REPL,
-                    // but still run detectShellType to see if there are profile/title hints.
-                    isShell = true;
-                    environment = this.detectShellType(session);
+                    const detectedShell = this.detectShellType(session);
+                    environment = detectedShell === 'sh' ? 'shell' : detectedShell;
+                    promptRaw = fallbackLine.raw;
+                    promptClean = fallbackLine.clean;
                 }
 
                 const tabAny = session.tab as any;
@@ -709,14 +820,26 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                     type: tabAny.profile.type
                 } : undefined;
 
+                if (detectionMode === 'active' && isShell) {
+                    const activeEnvironment = await this.detectActiveShellEnvironment(session);
+                    if (activeEnvironment) {
+                        environment = activeEnvironment.environment;
+                        isShell = activeEnvironment.isShell;
+                    }
+                }
+
+                const shell = isShell ? (['bash', 'zsh', 'fish', 'sh', 'shell'].includes(environment) ? environment : this.detectShellType(session)) : undefined;
+
                 return {
                     content: [{
                         type: 'text', text: JSON.stringify({
                             success: true,
                             sessionId: session.sessionId,
                             environment,
+                            shell,
                             isShell,
-                            lastPrompt: lastLine,
+                            lastPrompt: promptRaw,
+                            normalizedPrompt: promptClean || undefined,
                             cwd: tabAny.session?.cwd,
                             pid: tabAny.session?.pty?.pid,
                             profile
@@ -725,6 +848,36 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                 };
             }
         };
+    }
+
+    private async detectActiveShellEnvironment(session: TerminalSessionWithTab): Promise<{ environment: string; isShell: boolean } | null> {
+        const tabAny = session.tab as any;
+        const sessionObj = tabAny.session;
+        if (!sessionObj || sessionObj.open === false) {
+            return null;
+        }
+
+        const shell = this.detectShellType(session);
+        const command = `printf '__MCP_ENV__:'; if [ -n "$VIRTUAL_ENV" ]; then printf 'python-venv'; elif [ -n "$CONDA_DEFAULT_ENV" ]; then printf 'python-conda'; elif [ -n "$IN_NIX_SHELL" ]; then printf 'nix-shell'; else printf 'shell'; fi; printf ':__MCP_ENV__'`;
+
+        try {
+            const startMarker = `__MCP_ENV_START_${Date.now()}__`;
+            const endMarker = `__MCP_ENV_END_${Date.now()}__`;
+            const wrappedCommand = this.getWrappedCommand(command, startMarker, endMarker, shell);
+            session.tab.sendInput(wrappedCommand + '\n');
+            const result = await this.waitForCommandOutputViaBuffer(session, startMarker, endMarker, 3000, () => false);
+            const match = result.output.match(/__MCP_ENV__:(.+?):__MCP_ENV__/);
+            if (!match) {
+                return null;
+            }
+            const marker = match[1].trim();
+            if (marker === 'python-venv' || marker === 'python-conda' || marker === 'nix-shell') {
+                return { environment: marker, isShell: false };
+            }
+            return { environment: shell === 'sh' ? 'shell' : shell, isShell: true };
+        } catch {
+            return null;
+        }
     }
 
     /**

@@ -37,6 +37,17 @@ export class McpService {
     // Track whether tool endpoints have been registered to prevent duplicates on restart
     private toolEndpointsConfigured = false;
 
+    private isToolEnabled(toolName: string): boolean {
+        if (toolName === 'get_session_environment') {
+            return this.config?.store?.mcp?.environmentDetection?.enabled === true;
+        }
+        return true;
+    }
+
+    private getEnabledToolsFromCategory(category: ToolCategory): McpTool[] {
+        return category.mcpTools.filter(tool => this.isToolEnabled(tool.name));
+    }
+
     constructor(
         public config: ConfigService,
         private logger: McpLoggerService
@@ -63,8 +74,8 @@ export class McpService {
             version: PLUGIN_VERSION
         });
 
-        // Register all tools with this server instance
-        for (const toolDef of this.registeredTools) {
+        // Register enabled tools with this server instance
+        for (const toolDef of this.registeredTools.filter(tool => this.isToolEnabled(tool.name))) {
             (server.tool as any)(
                 toolDef.name,
                 toolDef.description,
@@ -167,7 +178,7 @@ export class McpService {
                     legacySse: '/sse',
                     legacyMessages: '/messages'
                 },
-                tools: this.toolCategories.flatMap(c => c.mcpTools.map(t => ({
+                tools: this.toolCategories.flatMap(c => this.getEnabledToolsFromCategory(c).map(t => ({
                     name: t.name,
                     description: t.description
                 })))
@@ -177,10 +188,10 @@ export class McpService {
         // Tools list endpoint (for debugging)
         this.app.get('/tools', (_, res) => {
             res.status(200).json({
-                count: this.toolCategories.reduce((sum, c) => sum + c.mcpTools.length, 0),
+                count: this.toolCategories.reduce((sum, c) => sum + this.getEnabledToolsFromCategory(c).length, 0),
                 categories: this.toolCategories.map(c => ({
                     name: c.name,
-                    tools: c.mcpTools.map(t => t.name)
+                    tools: this.getEnabledToolsFromCategory(c).map(t => t.name)
                 }))
             });
         });
@@ -471,6 +482,13 @@ export class McpService {
         this.toolCategories.forEach(category => {
             category.mcpTools.forEach(tool => {
                 this.app.post(`/api/tool/${tool.name}`, async (req: Request, res: Response) => {
+                    if (!this.isToolEnabled(tool.name)) {
+                        res.status(404).json({
+                            error: `Tool not available: ${tool.name}`,
+                            hint: 'The corresponding feature may be disabled in Settings → MCP.'
+                        });
+                        return;
+                    }
                     try {
                         this.logger.info(`API call: ${tool.name}`, req.body);
                         const result = await tool.handler(req.body, {});

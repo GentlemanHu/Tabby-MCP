@@ -217,6 +217,58 @@ import { PLUGIN_VERSION } from '../version';
 
       <hr />
 
+      <h4>🧭 {{ t('mcp.environmentDetection.title') }}</h4>
+      <small class="form-text text-muted mb-2">
+        {{ t('mcp.environmentDetection.desc') }}
+      </small>
+
+      <div class="form-group">
+        <div class="checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="config.store.mcp.environmentDetection.enabled" (change)="saveConfig()">
+            {{ t('mcp.environmentDetection.enable') }}
+          </label>
+        </div>
+        <small class="form-text text-muted">
+          {{ t('mcp.environmentDetection.enable.desc') }}
+        </small>
+      </div>
+
+      <div class="form-group" *ngIf="config.store.mcp.environmentDetection.enabled">
+        <div class="checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="config.store.mcp.environmentDetection.useEnhancedHeuristics" (change)="saveConfig()">
+            {{ t('mcp.environmentDetection.enhanced') }}
+          </label>
+        </div>
+        <small class="form-text text-muted">
+          {{ t('mcp.environmentDetection.enhanced.desc') }}
+        </small>
+      </div>
+
+      <div class="form-group" *ngIf="config.store.mcp.environmentDetection.enabled">
+        <label>{{ t('mcp.environmentDetection.mode') }}</label>
+        <select class="form-control" [(ngModel)]="config.store.mcp.environmentDetection.mode" (change)="saveConfig()">
+          <option value="heuristic">{{ t('mcp.environmentDetection.mode.heuristic') }}</option>
+          <option value="active">{{ t('mcp.environmentDetection.mode.active') }}</option>
+        </select>
+        <small class="form-text text-muted">
+          {{ t('mcp.environmentDetection.mode.desc') }}
+        </small>
+      </div>
+
+      <div class="alert alert-warning" *ngIf="config.store.mcp.environmentDetection.enabled">
+        <strong>⚠️ {{ t('mcp.environmentDetection.warning.title') }}</strong>
+        <ul class="mb-0">
+          <li>{{ t('mcp.environmentDetection.warning.heuristic') }}</li>
+          <li>{{ t('mcp.environmentDetection.warning.transient') }}</li>
+          <li>{{ t('mcp.environmentDetection.warning.customPrompt') }}</li>
+          <li>{{ t('mcp.environmentDetection.warning.verify') }}</li>
+        </ul>
+      </div>
+
+      <hr />
+
       <h4>🧪 {{ t('mcp.experimental.title') || 'Experimental Features' }}</h4>
 
       <div class="form-group">
@@ -746,6 +798,7 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   version = PLUGIN_VERSION;
   saveMessage = '';
   private configSub?: Subscription;
+  private lastEnvironmentDetectionEnabled = false;
 
   constructor(
     public config: ConfigService,
@@ -790,6 +843,14 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
         timeout: 60000
       };
     }
+    // Ensure environmentDetection config exists
+    if (!this.config.store.mcp.environmentDetection) {
+      this.config.store.mcp.environmentDetection = {
+        enabled: false,
+        useEnhancedHeuristics: true,
+        mode: 'heuristic'
+      };
+    }
     // Ensure new fields exist on existing config
     if (this.config.store.mcp.sftp.maxUploadSize === undefined) {
       this.config.store.mcp.sftp.maxUploadSize = 10 * 1024 * 1024 * 1024;
@@ -797,6 +858,8 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     if (this.config.store.mcp.sftp.maxDownloadSize === undefined) {
       this.config.store.mcp.sftp.maxDownloadSize = 10 * 1024 * 1024 * 1024;
     }
+
+    this.lastEnvironmentDetectionEnabled = this.config.store.mcp.environmentDetection.enabled === true;
   }
 
   ngOnDestroy(): void {
@@ -872,10 +935,26 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     }
   }
 
-  saveConfig(): void {
-    this.config.save();
-    this.saveMessage = this.t('mcp.common.saved');
-    setTimeout(() => { this.saveMessage = ''; }, 2000);
+  async saveConfig(): Promise<void> {
+    const environmentDetectionEnabled = this.config.store.mcp?.environmentDetection?.enabled === true;
+    const environmentDetectionChanged = environmentDetectionEnabled !== this.lastEnvironmentDetectionEnabled;
+
+    await this.config.save();
+    this.lastEnvironmentDetectionEnabled = environmentDetectionEnabled;
+
+    if (environmentDetectionChanged && this.isRunning) {
+      const shouldRestart = confirm(this.t('mcp.environmentDetection.restart.confirm'));
+      if (shouldRestart) {
+        await this.restartServer();
+        this.saveMessage = this.t('mcp.environmentDetection.restart.done');
+      } else {
+        this.saveMessage = this.t('mcp.environmentDetection.restart.later');
+      }
+    } else {
+      this.saveMessage = this.t('mcp.common.saved');
+    }
+
+    setTimeout(() => { this.saveMessage = ''; }, 3000);
   }
 
   // ============== Size conversion helpers (MB <-> Bytes) ==============

@@ -381,13 +381,17 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
-### v1.6.1 (2026-06-06)
+### v1.6.2 (2026-06-06)
 
 **✨ New Features:**
-- 🔍 **Added `get_session_environment` tool**
-  - Allows AI agents to actively probe the terminal context (e.g., detecting if the session is currently in a Python, Node.js, MySQL, PostgreSQL, or standard bash environment) using buffer heuristics.
-- 📦 **Fix NPM publish workflow**
-  - Use traditional `NODE_AUTH_TOKEN` in GitHub actions because OIDC Provenance returned persistent `404` errors under the registry configuration.
+- 🔍 **Added `get_session_environment` tool** (refs #6)
+  - Allows AI agents to accurately detect the terminal context (e.g. detecting Python, Node.js, MySQL, PostgreSQL, SQLite, or standard shell environments).
+  - Supports dual modes: `heuristic` (passive buffer parsing with ANSI stripping) and `active` (low-risk active probing for local sessions).
+  - **Disabled by default** to ensure predictable AI behavior. Includes full Tabby Settings UI and dynamic tool registration.
+
+**🐛 Bug Fixes:**
+- 🔧 **Fixed NPM OIDC Publish Workflow**: Restored reliable token-based publishing (Node 24) to bypass continuous 404 errors from NPM's Trusted Publisher verification.
+- 🔧 **Fixed Boot Crash**: Resolved an early initialization crash `Cannot read properties of undefined (reading 'mcp')` by deferring tool registration logic until configuration is fully loaded.
 
 ### v1.6.0 (2026-06-06)
 

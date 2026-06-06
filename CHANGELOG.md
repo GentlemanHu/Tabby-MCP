@@ -2,13 +2,19 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
-## [1.6.1] - 2026-06-06
+## [1.6.2] - 2026-06-06
 
 ### ✨ Added
-- **`get_session_environment` tool**: Detects terminal execution context (e.g. bash, Python, Node, MySQL) using buffer heuristics, helping AI agents avoid sending incorrect interactive commands.
-- **Fixed NPM publish action**: Fallback to explicit tokens as strict OIDC configuration triggered E404s.
+- **`get_session_environment` tool**: Added robust environment detection tool to intelligently probe if a session is currently running a shell, python, mysql, sqlite, etc. 
+  - Dual modes included: `heuristic` (passive ANSI-cleaned buffer scan) and `active` (low-risk active probing).
+  - Defaults to **disabled** and is fully configurable via Tabby Settings. When disabled, the tool is strictly omitted from registration to prevent AI hallucination.
+- **Environment Detection Config UI**: Full settings tab integration with i18n support (zh-CN, en-US) and risk warnings.
 
-## [1.6.0] - 2026-06-06
+### 🔧 Fixed
+- **NPM Publish Workflow**: Stabilized GitHub Action publish workflow using pure Node 24 and NPM token mode, bypassing persistent OIDC trusted publisher 404 blockages.
+- **Config-Ready Lifecycle Crash**: Fixed a critical crash on boot (`TypeError: Cannot read properties of undefined (reading 'mcp')`) caused by eager configuration evaluation during early tool registration.
+
+## [1.6.1] - 2026-06-06
 
 ### 🔧 Fixed
 - **`quick_connect` false success / wrong protocol selection** (refs #3, #5, #6)

@@ -363,7 +363,19 @@ npm run build
 - 🔧 **改进插件退出清理逻辑**（引用 #5）
   - 在插件/窗口卸载时尽力停止 MCP server，减少重启后端口残留问题
 
-### v1.5.1 (2026-04-03)
+### v1.6.2 (2026-06-06)
+
+**✨ 新功能：**
+- 🔍 **新增 `get_session_environment` 工具** (关联 #6)
+  - 允许 AI 智能体精准探测当前终端上下文（例如识别是否正在运行 Python、Node.js、MySQL、PostgreSQL、SQLite 或是标准 Shell）。
+  - 支持双模式：`heuristic`（基于 ANSI 洗版的被动启发式缓冲扫描）与 `active`（针对本地会话的低风险主动探测）。
+  - **默认关闭** 以确保 AI 行为一致性；工具仅在开启时动态注册。集成完整设置项及国际化风险提示。
+
+**🐛 问题修复：**
+- 🔧 **修复 NPM OIDC 发版工作流**：将发版恢复为 Node 24 下纯令牌验证，绕过 NPM 官方 OIDC 验证异常拦截导致的持续 404 错误。
+- 🔧 **修复插件启动崩溃**：解决了配置未就绪前提前拉取导致 `Cannot read properties of undefined (reading 'mcp')` 的严重异常。
+
+### v1.6.0 (2026-06-06)
 
 **🐛 问题修复：**
 - 🔧 **修复 `/api/tool/{name}` 端点返回 404** (Issue #4) - 工具 API 端点在 `configureExpress()` 中注册时 `toolCategories` 为空（Angular 依赖注入初始化顺序问题）
