@@ -66,6 +66,7 @@ export class TerminalToolCategory extends BaseToolCategory {
         this.registerTool(this.createGetSessionListTool());
         this.registerTool(this.createExecCommandTool());
         this.registerTool(this.createSendInputTool());
+        this.registerTool(this.createSubmitKeyboardInteractiveResponseTool());
         this.registerTool(this.createGetTerminalBufferTool());
         this.registerTool(this.createAbortCommandTool());
         this.registerTool(this.createGetCommandStatusTool());
@@ -309,6 +310,32 @@ export class TerminalToolCategory extends BaseToolCategory {
         return null;
     }
 
+    private getKeyboardInteractivePrompt(session: TerminalSessionWithTab): any | null {
+        return (session.tab as any).activeKIPrompt ?? null;
+    }
+
+    private describeKeyboardInteractivePrompt(prompt: any): any | undefined {
+        if (!prompt) {
+            return undefined;
+        }
+
+        return {
+            name: prompt.name ?? '',
+            instruction: prompt.instruction ?? '',
+            prompts: Array.isArray(prompt.prompts)
+                ? prompt.prompts.map((p: any, index: number) => ({
+                    index,
+                    prompt: p?.prompt ?? '',
+                    echo: p?.echo !== false,
+                    isPassword: typeof prompt.isAPasswordPrompt === 'function'
+                        ? Boolean(prompt.isAPasswordPrompt(index))
+                        : false
+                }))
+                : [],
+            responseCount: Array.isArray(prompt.responses) ? prompt.responses.length : 0
+        };
+    }
+
     /**
      * Tool: Get list of terminal sessions with enhanced metadata
      * Now includes detailed split pane information
@@ -330,6 +357,7 @@ For split panes:
                 const sessions = this.findTerminalSessions();
                 const result = sessions.map(s => {
                     const tabAny = s.tab as any;
+                    const keyboardInteractivePrompt = this.getKeyboardInteractivePrompt(s);
                     return {
                         sessionId: s.sessionId,
                         tabIndex: s.tabIndex,
@@ -337,6 +365,9 @@ For split panes:
                         type: s.tab.constructor.name,
                         isActive: this.app.activeTab === s.tabParent,
                         hasActiveCommand: this._activeCommands.has(s.sessionId),
+                        sshConnected: tabAny.sshSession?.open === true,
+                        keyboardInteractivePending: Boolean(keyboardInteractivePrompt),
+                        keyboardInteractivePrompt: this.describeKeyboardInteractivePrompt(keyboardInteractivePrompt),
                         profile: tabAny.profile ? {
                             id: tabAny.profile.id,
                             name: tabAny.profile.name,
@@ -635,6 +666,151 @@ Special keys: \\x03 (Ctrl+C), \\x04 (Ctrl+D), \\x1b (Escape), \\r (Enter)`,
                                 success: false,
                                 error: `Failed to send input: ${error.message}. Session might be disconnected.`,
                                 sessionId: session.sessionId
+                            })
+                        }]
+                    };
+                }
+            }
+        };
+    }
+
+    /**
+     * Tool: Submit response to Tabby's SSH keyboard-interactive auth panel
+     */
+    private createSubmitKeyboardInteractiveResponseTool(): McpTool {
+        return {
+            name: 'submit_keyboard_interactive_response',
+            description: `Submit response(s) to an active SSH keyboard-interactive authentication prompt.
+Use this for MFA/TOTP prompts shown by Tabby's SSH authentication panel, such as Jumpserver MFA.
+
+This tool targets Tabby's activeKIPrompt object directly; it is different from send_input,
+which writes to the terminal pty and cannot answer Tabby's auth form.
+
+Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
+            schema: z.object({
+                response: z.string().optional().describe('Single response for prompts with one field, such as a 6-digit TOTP code'),
+                responses: z.array(z.string()).optional().describe('Responses for multi-prompt keyboard-interactive auth, in prompt order'),
+                submit: z.boolean().optional().describe('Whether to submit after filling responses (default: true)'),
+                sessionId: z.string().optional().describe('Stable session ID (recommended)'),
+                tabIndex: z.number().optional().describe('Tab index (legacy)'),
+                title: z.string().optional().describe('Match by title'),
+                profileName: z.string().optional().describe('Match by profile name')
+            }),
+            handler: async (params: {
+                response?: string;
+                responses?: string[];
+                submit?: boolean;
+                sessionId?: string;
+                tabIndex?: number;
+                title?: string;
+                profileName?: string;
+            }) => {
+                const { response, responses, submit, sessionId, tabIndex, title, profileName } = params;
+                const session = this.findSessionByLocator({ sessionId, tabIndex, title, profileName });
+
+                if (!session) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                error: 'No matching terminal session found',
+                                hint: 'Use get_session_list to see available sessions'
+                            })
+                        }]
+                    };
+                }
+
+                const prompt = this.getKeyboardInteractivePrompt(session);
+                if (!prompt) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                keyboardInteractivePending: false,
+                                error: 'No active keyboard-interactive prompt on this session'
+                            })
+                        }]
+                    };
+                }
+
+                const providedResponses = responses ?? (response !== undefined ? [response] : undefined);
+                if (!providedResponses || providedResponses.length === 0) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                keyboardInteractivePending: true,
+                                keyboardInteractivePrompt: this.describeKeyboardInteractivePrompt(prompt),
+                                error: 'Provide response or responses'
+                            })
+                        }]
+                    };
+                }
+
+                if (!Array.isArray(prompt.responses) || !Array.isArray(prompt.prompts)) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: 'Active keyboard-interactive prompt has an unexpected shape',
+                                keyboardInteractivePrompt: this.describeKeyboardInteractivePrompt(prompt)
+                            })
+                        }]
+                    };
+                }
+
+                if (providedResponses.length !== prompt.prompts.length) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: `Expected ${prompt.prompts.length} response(s), got ${providedResponses.length}`,
+                                keyboardInteractivePrompt: this.describeKeyboardInteractivePrompt(prompt)
+                            })
+                        }]
+                    };
+                }
+
+                try {
+                    providedResponses.forEach((value, index) => {
+                        prompt.responses[index] = value;
+                    });
+
+                    if (submit !== false) {
+                        if (typeof prompt.respond !== 'function') {
+                            throw new Error('Keyboard-interactive prompt does not expose respond()');
+                        }
+                        prompt.respond();
+                        (session.tab as any).activeKIPrompt = null;
+                        (session.tab as any).frontend?.focus?.();
+                    }
+
+                    this.logger.info(`Submitted keyboard-interactive response for session ${session.sessionId}`);
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: true,
+                                sessionId: session.sessionId,
+                                submitted: submit !== false,
+                                responseCount: providedResponses.length,
+                                message: submit === false
+                                    ? 'Keyboard-interactive response filled but not submitted'
+                                    : 'Keyboard-interactive response submitted'
+                            })
+                        }]
+                    };
+                } catch (error: any) {
+                    this.logger.error(`Error submitting keyboard-interactive response for session ${session.sessionId}:`, error);
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: `Failed to submit keyboard-interactive response: ${error.message || error}`
                             })
                         }]
                     };
