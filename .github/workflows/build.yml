@@ -26,8 +26,8 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build
-        run: npm run build
+      - name: Validate
+        run: npm run check
 
       - name: Create release archive
         run: |
@@ -47,6 +47,17 @@ jobs:
             typings/
             package.json
 
+      # A tag containing a hyphen (v1.6.3-rc.1, v2.0.0-beta.2) is a prerelease.
+      # Prereleases are published to GitHub only and never to npm.
+      - name: Classify release
+        id: classify
+        run: |
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
@@ -56,12 +67,12 @@ jobs:
             tabby-mcp-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.classify.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to npm
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && steps.classify.outputs.prerelease == 'false'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -82,5 +93,5 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build
-        run: npm run build
+      - name: Validate
+        run: npm run check

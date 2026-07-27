@@ -350,7 +350,9 @@ npm run build
 
 ## 📝 更新日志
 
-### v1.6.3 (2026-07-27)
+### v1.6.3-rc.1 (2026-07-27) — 预发布
+
+> ⚠️ **预发布版本，尚未发布到 npm。** 这些修复已通过静态分析、类型检查、冒烟回归检查和生产构建验证，但**尚未在真实的 Tabby/Electron 环境中手动运行验证**。其中对话框焦点恢复、SFTP 传输的实际取消行为，以及多实例端口交接尤其需要实机测试。可从 [GitHub 预发布页面](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.1) 安装，如遇异常请在对应 issue 下反馈。
 
 - 修复 [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9)：结对编程确认现在覆盖 `send_input` 和敏感 SFTP 操作；取消传输会真正终止底层传输。
 - 修复 [Issue #7](https://github.com/GentlemanHu/Tabby-MCP/issues/7)：用非阻塞、可恢复焦点的对话框替代浏览器阻塞弹窗，并让命令聚焦行为遵循“自动聚焦终端”设置。

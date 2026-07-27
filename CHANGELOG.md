@@ -2,7 +2,9 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
-## [1.6.3] - 2026-07-27
+## [1.6.3-rc.1] - 2026-07-27
+
+> ⚠️ **Prerelease.** Published to GitHub only, not to npm. Verified by typecheck, smoke regression checks, and a production build; **not verified by a manual run inside a real Tabby/Electron session**. Dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover still need hands-on testing before a stable 1.6.3.
 
 ### 🔒 Security
 - **Pair Programming approval coverage** (Issue #9): `send_input` now always follows command-confirmation settings after escape decoding; sensitive SFTP operations are independently controlled by the SFTP confirmation setting.
