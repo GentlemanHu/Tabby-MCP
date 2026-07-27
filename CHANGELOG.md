@@ -2,6 +2,30 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.6.3] - 2026-07-27
+
+### 🔒 Security
+- **Pair Programming approval coverage** (Issue #9): `send_input` now always follows command-confirmation settings after escape decoding; sensitive SFTP operations are independently controlled by the SFTP confirmation setting.
+- **Complete approval payloads**: confirmation dialogs show the complete decoded terminal input or SFTP write content rather than a truncated preview.
+- **Loopback hardening**: the service binds and publishes only `127.0.0.1`; Host and Origin validation now reject non-loopback and wrong-port requests across MCP endpoints.
+- **Direct tool API disabled by default**: the compatibility-only `/api/tool/:name` endpoint requires explicit configuration.
+
+### 🐛 Fixed
+- **Issue #5 — restart after an unclean shutdown**: added single-flight server startup, stop-aware startup cancellation, retry/backoff, stale-instance detection, and authenticated same-install port handover.
+- **Issue #7 — terminal focus and IME disruption**: replaced blocking browser dialogs with queued non-blocking dialogs that restore the previous focus after resolving.
+- **Streamable HTTP conformance**: delegated GET and DELETE handling to the MCP SDK so session, protocol, Accept-header, standalone SSE, and one-stream validation are enforced consistently.
+- **Legacy SSE compatibility**: pass the JSON body already consumed by Express to SDK message handling; clear per-session servers for all transport close paths.
+- **SFTP cancellation**: cancellation persists through session setup, cancels only the transfer stream instead of the shared SFTP session, preserves `cancelled` state, and stops stale progress updates.
+- **SFTP session targeting**: added `profileName` matching consistent with terminal tools.
+- **Environment probing**: corrected the fish active-probe control-flow syntax.
+- **Logging**: error-level entries are retained even when ordinary logging is disabled.
+
+### 🧰 Changed
+- Pinned `@modelcontextprotocol/sdk` to `1.25.2` and committed `package-lock.json` for reproducible installs.
+- Added `typecheck`, smoke-test, full-check, declaration-generation, and prepack quality gates.
+- Included the STDIO bridge in published package files.
+- Updated English and Simplified Chinese documentation, translations, contribution workflow, and project file guide.
+
 ## [1.6.2] - 2026-06-06
 
 ### ✨ Added

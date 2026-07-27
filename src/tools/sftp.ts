@@ -1,13 +1,15 @@
 import { Injectable } from '@angular/core';
-import { AppService, BaseTabComponent, SplitTabComponent, ConfigService } from 'tabby-core';
+import { AppService, SplitTabComponent, ConfigService } from 'tabby-core';
 import { z } from 'zod';
 import { BehaviorSubject } from 'rxjs';
 import { BaseToolCategory } from './base-tool-category';
 import { McpLoggerService } from '../services/mcpLogger.service';
+import { DialogService } from '../services/dialog.service';
 import { McpTool, SFTPFileInfo } from '../types/types';
 import { TerminalToolCategory } from './terminal';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 // Try to import tabby-ssh (optional dependency)
 let SSHTabComponent: any;
@@ -39,8 +41,8 @@ interface TransferTask {
     endTime?: number;
     error?: string;
     speed?: number;            // bytes/sec
-    cancelCallback?: () => void; // Function to force kill the transfer
-    reject?: (reason?: any) => void; // Function to reject the tool promise
+    cancelRequested: boolean;
+    cancelCallback?: () => void;
 }
 
 /**
@@ -77,7 +79,8 @@ export class SFTPToolCategory extends BaseToolCategory {
         private app: AppService,
         private config: ConfigService,
         logger: McpLoggerService,
-        private terminalTools: TerminalToolCategory
+        private terminalTools: TerminalToolCategory,
+        private dialogService: DialogService
     ) {
         super(logger);
         if (sftpAvailable) {
@@ -86,6 +89,30 @@ export class SFTPToolCategory extends BaseToolCategory {
         } else {
             this.logger.warn('SFTP tools not available (tabby-ssh not installed)');
         }
+    }
+
+    /**
+     * Pair programming gate for state-changing/sensitive SFTP operations (Issue #9).
+     * Returns true when the operation may proceed.
+     */
+    private async confirmSftpOperation(operation: string, connectionName: string, detail: string): Promise<boolean> {
+        const pairMode = this.config.store.mcp?.pairProgrammingMode;
+        if (!pairMode?.enabled || !pairMode?.showConfirmationDialog || pairMode?.confirmFileOperations === false) {
+            return true;
+        }
+        return this.dialogService.showOperationConfirmation(operation, connectionName, detail);
+    }
+
+    /** Standard rejection response when the user denies an SFTP operation */
+    private rejectedResponse(operation: string): any {
+        return {
+            content: [{
+                type: 'text', text: JSON.stringify({
+                    success: false,
+                    error: `${operation} rejected by user`
+                })
+            }]
+        };
     }
 
     public isAvailable(): boolean {
@@ -111,7 +138,11 @@ export class SFTPToolCategory extends BaseToolCategory {
     }
 
     private generateTransferId(): string {
-        return 'transfer_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+        return `transfer_${randomUUID()}`;
+    }
+
+    private isTransferCancelled(task: TransferTask): boolean {
+        return task.cancelRequested || task.status === 'cancelled';
     }
 
     /** Emit current transfer state to UI subscribers */
@@ -153,46 +184,46 @@ export class SFTPToolCategory extends BaseToolCategory {
         maxWaitMs: number = 0
     ): Promise<T | 'completed_via_polling'> {
         const startTime = Date.now();
+        let pollTimer: ReturnType<typeof setTimeout> | undefined;
+        let pollingStopped = false;
 
-        // Create a polling promise that resolves when transfer is complete
         const pollingPromise = new Promise<'completed_via_polling'>((resolve, reject) => {
             const checkComplete = () => {
-                // Check if SSH session disconnected
+                if (pollingStopped) {
+                    return;
+                }
                 if (sshSession && sshSession.open === false) {
                     this.logger.warn('[SFTP] SSH session disconnected during transfer');
                     reject(new Error('SSH connection lost during transfer'));
                     return;
                 }
-
-                // Check if cancelled
                 if (transferObj.isCancelled()) {
                     reject(new Error('Transfer cancelled'));
                     return;
                 }
-
-                // Check if complete
                 if (transferObj.isComplete()) {
                     this.logger.debug('[SFTP] Transfer detected as complete via polling');
                     resolve('completed_via_polling');
                     return;
                 }
-
-                // Check timeout (if maxWaitMs > 0)
                 if (maxWaitMs > 0 && (Date.now() - startTime) > maxWaitMs) {
                     reject(new Error(`Transfer timed out after ${maxWaitMs}ms`));
                     return;
                 }
-
-                // Continue polling
-                setTimeout(checkComplete, pollIntervalMs);
+                pollTimer = setTimeout(checkComplete, pollIntervalMs);
             };
 
-            // Start polling with a slight delay to let the native promise resolve first
-            setTimeout(checkComplete, pollIntervalMs);
+            pollTimer = setTimeout(checkComplete, pollIntervalMs);
         });
 
-        // Race between the original promise and our polling promise
-        return Promise.race([sftpPromise, pollingPromise]);
+        try {
+            return await Promise.race([sftpPromise, pollingPromise]);
+        } finally {
+            pollingStopped = true;
+            if (pollTimer) {
+                clearTimeout(pollTimer);
+            }
+        }
     }
 
     // ============== Public methods for UI ==============
@@ -206,10 +237,10 @@ export class SFTPToolCategory extends BaseToolCategory {
     public cancelTransferById(transferId: string): boolean {
         const task = this.transferTasks.get(transferId);
         if (task && (task.status === 'pending' || task.status === 'running')) {
+            task.cancelRequested = true;
             task.status = 'cancelled';
             task.endTime = Date.now();
 
-            // Force kill the underlying session/stream
             if (task.cancelCallback) {
                 try {
                     task.cancelCallback();
@@ -219,11 +250,8 @@ export class SFTPToolCategory extends BaseToolCategory {
                 }
             }
 
-            // Force reject the promise to unblock MCP tool
-            if (task.reject) {
-                task.reject(new Error('Transfer cancelled by user'));
-            }
-
+            // waitForTransferComplete polls isCancelled() and rejects the MCP
+            // tool promise within one poll interval (500ms)
             this.emitTransferUpdate();
             this.logger.info(`Transfer ${transferId} cancelled by user`);
             return true;
@@ -274,14 +302,14 @@ export class SFTPToolCategory extends BaseToolCategory {
         return sshTabs;
     }
 
-    private findSSHSession(locator: { sessionId?: string; tabIndex?: number; title?: string }): { tab: any; sessionId: string } | null {
+    private findSSHSession(locator: { sessionId?: string; tabIndex?: number; title?: string; profileName?: string }): { tab: any; sessionId: string } | null {
         if (!sftpAvailable) return null;
 
         const sshTabs = this.findAllSSHTabs();
         this.logger.debug(`[findSSHSession] Found ${sshTabs.length} SSH tabs, locator: ${JSON.stringify(locator)}`);
 
         // CASE 1: No locator provided - return first SSH tab (if any) as default
-        if (!locator.sessionId && locator.tabIndex === undefined && !locator.title) {
+        if (!locator.sessionId && locator.tabIndex === undefined && !locator.title && !locator.profileName) {
             if (sshTabs.length > 0) {
                 const tab = sshTabs[0];
                 const sessionId = this.getOrCreateSessionId(tab);
@@ -342,6 +370,19 @@ export class SFTPToolCategory extends BaseToolCategory {
                 return { tab: found, sessionId };
             }
             this.logger.warn(`[findSSHSession] No title match for: ${locator.title}`);
+            return null;
+        }
+
+        // CASE 5: profileName provided (partial, case-insensitive - same semantics as terminal tools)
+        if (locator.profileName) {
+            const nameLower = locator.profileName.toLowerCase();
+            const found = sshTabs.find(tab => (tab as any).profile?.name?.toLowerCase().includes(nameLower));
+            if (found) {
+                const sessionId = this.getOrCreateSessionId(found);
+                this.logger.info(`[findSSHSession] Found by profileName match: ${locator.profileName}, sessionId=${sessionId}`);
+                return { tab: found, sessionId };
+            }
+            this.logger.warn(`[findSSHSession] No profileName match for: ${locator.profileName}`);
             return null;
         }
 
@@ -449,7 +490,8 @@ export class SFTPToolCategory extends BaseToolCategory {
     private readonly sessionSchema = {
         sessionId: z.string().optional().describe('SSH session ID (from get_session_list)'),
         tabIndex: z.number().optional().describe('Tab index of SSH session'),
-        title: z.string().optional().describe('Match SSH session by tab title')
+        title: z.string().optional().describe('Match SSH session by tab title'),
+        profileName: z.string().optional().describe('Match SSH session by profile name (partial, case-insensitive)')
     };
 
     // ============== BASIC SFTP OPERATIONS ==============
@@ -471,6 +513,10 @@ Returns: Array of {name, path, isDirectory, size, modifiedTime}`,
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
                 }
                 this.logger.debug(`[sftp_list_files] Using session: ${session.sessionId}`);
+
+                if (!await this.confirmSftpOperation('sftp_list_files', session.tab.title || 'SSH', params.path || '/')) {
+                    return this.rejectedResponse('sftp_list_files');
+                }
 
                 try {
                     const sftp = await this.getSFTPSession(session.tab);
@@ -526,6 +572,10 @@ Max size: Configurable in Settings (default: 1MB)`,
                 if (!session) {
                     this.logger.warn('[sftp_read_file] No SSH session found');
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
+                }
+
+                if (!await this.confirmSftpOperation('sftp_read_file', session.tab.title || 'SSH', params.path)) {
+                    return this.rejectedResponse('sftp_read_file');
                 }
 
                 try {
@@ -600,6 +650,11 @@ For text content only. Use sftp_upload for binary files.`,
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
                 }
 
+                const writeDetail = `${params.append ? 'APPEND' : 'WRITE'} ${params.path} (${params.content?.length ?? 0} chars)\nContent: ${JSON.stringify(params.content)}`;
+                if (!await this.confirmSftpOperation('sftp_write_file', session.tab.title || 'SSH', writeDetail)) {
+                    return this.rejectedResponse('sftp_write_file');
+                }
+
                 try {
                     const sftp = await this.getSFTPSession(session.tab);
                     if (!sftp) {
@@ -642,6 +697,10 @@ For text content only. Use sftp_upload for binary files.`,
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
                 }
 
+                if (!await this.confirmSftpOperation('sftp_mkdir', session.tab.title || 'SSH', params.path)) {
+                    return this.rejectedResponse('sftp_mkdir');
+                }
+
                 try {
                     const sftp = await this.getSFTPSession(session.tab);
                     if (!sftp) {
@@ -672,6 +731,10 @@ For text content only. Use sftp_upload for binary files.`,
                 if (!session) {
                     this.logger.warn('[sftp_delete] No SSH session found');
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
+                }
+
+                if (!await this.confirmSftpOperation('sftp_delete', session.tab.title || 'SSH', `DELETE ${params.path}`)) {
+                    return this.rejectedResponse('sftp_delete');
                 }
 
                 try {
@@ -723,6 +786,10 @@ For text content only. Use sftp_upload for binary files.`,
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
                 }
 
+                if (!await this.confirmSftpOperation('sftp_rename', session.tab.title || 'SSH', `${params.sourcePath} → ${params.destPath}`)) {
+                    return this.rejectedResponse('sftp_rename');
+                }
+
                 try {
                     const sftp = await this.getSFTPSession(session.tab);
                     if (!sftp) {
@@ -756,6 +823,10 @@ For text content only. Use sftp_upload for binary files.`,
                 const session = this.findSSHSession(params);
                 if (!session) {
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
+                }
+
+                if (!await this.confirmSftpOperation('sftp_stat', session.tab.title || 'SSH', params.path)) {
+                    return this.rejectedResponse('sftp_stat');
                 }
 
                 try {
@@ -824,6 +895,10 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                 }
                 this.logger.debug(`[sftp_upload] Using session: ${session.sessionId}`);
 
+                if (!await this.confirmSftpOperation('sftp_upload', session.tab.title || 'SSH', `${params.localPath} → ${params.remotePath}`)) {
+                    return this.rejectedResponse('sftp_upload');
+                }
+
                 // Check local file exists
                 if (!fs.existsSync(params.localPath)) {
                     this.logger.warn(`[sftp_upload] Local file not found: ${params.localPath}`);
@@ -863,7 +938,8 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                     progress: 0,
                     bytesTransferred: 0,
                     totalBytes: stats.size,
-                    startTime: Date.now()
+                    startTime: Date.now(),
+                    cancelRequested: false
                 };
                 this.transferTasks.set(transferId, task);
                 this._transferTasksSubject.next(Array.from(this.transferTasks.values()));
@@ -872,6 +948,9 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                 const sync = params.sync !== false;
 
                 const doUpload = async () => {
+                    if (this.isTransferCancelled(task)) {
+                        throw new Error('Transfer cancelled');
+                    }
                     task.status = 'running';
                     this.emitTransferUpdate();
                     let fileUpload: StreamFileUpload | undefined;
@@ -881,36 +960,36 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                             throw new Error('Could not open SFTP session');
                         }
 
-                        // Bind cancel callback to force close session on user cancel
-                        task.cancelCallback = () => {
-                            this.logger.warn(`[SFTP] Force cancelling upload: ${transferId}`);
-                            try {
-                                if (fileUpload) fileUpload.cancel();
-                                sftpSession.end();
-                            } catch (e) {
-                                this.logger.error('[SFTP] Error cancelling upload:', e);
-                            }
-                        };
-
-                        // Use Tabby's official SFTP API (russh-based)
                         fileUpload = new StreamFileUpload(
                             params.localPath,
                             stats.size,
                             (bytes: number) => {
-                                task.bytesTransferred = bytes;
-                                task.progress = Math.round((bytes / task.totalBytes) * 100);
-                                task.speed = bytes / ((Date.now() - task.startTime) / 1000);
+                                if (!this.isTransferCancelled(task)) {
+                                    task.bytesTransferred = bytes;
+                                    task.progress = Math.round((bytes / task.totalBytes) * 100);
+                                    task.speed = bytes / ((Date.now() - task.startTime) / 1000);
+                                }
                             }
                         );
+                        task.cancelCallback = () => {
+                            this.logger.warn(`[SFTP] Cancelling upload: ${transferId}`);
+                            fileUpload?.cancel();
+                        };
 
-                        // Wrap with polling fallback to handle Tabby SFTP API not resolving
-                        // Also pass sshSession to detect connection loss during transfer
+                        if (this.isTransferCancelled(task)) {
+                            fileUpload.cancel();
+                            throw new Error('Transfer cancelled');
+                        }
+
                         const sshSession = (session.tab as any).sshSession;
                         const uploadPromise = sftpSession.upload(params.remotePath, fileUpload);
                         const result = await this.waitForTransferComplete(uploadPromise, fileUpload, sshSession);
 
+                        if (this.isTransferCancelled(task)) {
+                            throw new Error('Transfer cancelled');
+                        }
                         if (result === 'completed_via_polling') {
-                            this.logger.info(`[sftp_upload] Transfer completed via polling fallback`);
+                            this.logger.info('[sftp_upload] Transfer completed via polling fallback');
                         }
 
                         task.status = 'completed';
@@ -919,22 +998,17 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                         task.endTime = Date.now();
                         this.emitTransferUpdate();
                     } catch (error: any) {
-                        task.status = 'failed';
-                        task.error = error.message || String(error);
+                        if (!this.isTransferCancelled(task)) {
+                            task.status = 'failed';
+                            task.error = error.message || String(error);
+                        }
                         task.endTime = Date.now();
                         this.emitTransferUpdate();
-
-                        // Try to cancel/close if running
-                        if (fileUpload) {
-                            fileUpload.cancel();
-                        }
-
+                        fileUpload?.cancel();
                         throw error;
                     } finally {
-                        // Ensure file descriptor is closed
-                        if (fileUpload) {
-                            fileUpload.close();
-                        }
+                        task.cancelCallback = undefined;
+                        fileUpload?.close();
                     }
                 };
 
@@ -964,7 +1038,11 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                     }
                 } else {
                     // Async mode - start upload in background
-                    doUpload().catch(e => this.logger.error('Async upload failed:', e));
+                    doUpload().catch(e => {
+                        if (!this.isTransferCancelled(task)) {
+                            this.logger.error('Async upload failed:', e);
+                        }
+                    });
                     return {
                         content: [{
                             type: 'text', text: JSON.stringify({
@@ -1010,6 +1088,10 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                     return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No SSH session found' }) }] };
                 }
                 this.logger.debug(`[sftp_download] Using session: ${session.sessionId}`);
+
+                if (!await this.confirmSftpOperation('sftp_download', session.tab.title || 'SSH', `${params.remotePath} → ${params.localPath}`)) {
+                    return this.rejectedResponse('sftp_download');
+                }
 
                 try {
                     const sftp = await this.getSFTPSession(session.tab);
@@ -1067,7 +1149,8 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                         progress: 0,
                         bytesTransferred: 0,
                         totalBytes: remoteStats.size,
-                        startTime: Date.now()
+                        startTime: Date.now(),
+                        cancelRequested: false
                     };
                     this.transferTasks.set(transferId, task);
                     this._transferTasksSubject.next(Array.from(this.transferTasks.values()));
@@ -1076,6 +1159,9 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                     const sync = params.sync !== false;
 
                     const doDownload = async () => {
+                        if (this.isTransferCancelled(task)) {
+                            throw new Error('Transfer cancelled');
+                        }
                         task.status = 'running';
                         this.emitTransferUpdate();
                         let fileDownload: StreamFileDownload | undefined;
@@ -1085,36 +1171,36 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                                 throw new Error('Could not open SFTP session');
                             }
 
-                            // Bind cancel callback to force close session on user cancel
-                            task.cancelCallback = () => {
-                                this.logger.warn(`[SFTP] Force cancelling download: ${transferId}`);
-                                try {
-                                    if (fileDownload) fileDownload.cancel();
-                                    sftpSession.end();
-                                } catch (e) {
-                                    this.logger.error('[SFTP] Error cancelling download:', e);
-                                }
-                            };
-
-                            // Use Tabby's official SFTP API (russh-based)
                             fileDownload = new StreamFileDownload(
                                 params.localPath,
                                 remoteStats.size,
                                 (bytes: number) => {
-                                    task.bytesTransferred = bytes;
-                                    task.progress = Math.round((bytes / task.totalBytes) * 100);
-                                    task.speed = bytes / ((Date.now() - task.startTime) / 1000);
+                                    if (!this.isTransferCancelled(task)) {
+                                        task.bytesTransferred = bytes;
+                                        task.progress = Math.round((bytes / task.totalBytes) * 100);
+                                        task.speed = bytes / ((Date.now() - task.startTime) / 1000);
+                                    }
                                 }
                             );
+                            task.cancelCallback = () => {
+                                this.logger.warn(`[SFTP] Cancelling download: ${transferId}`);
+                                fileDownload?.cancel();
+                            };
 
-                            // Wrap with polling fallback to handle Tabby SFTP API not resolving
-                            // Also pass sshSession to detect connection loss during transfer
+                            if (this.isTransferCancelled(task)) {
+                                fileDownload.cancel();
+                                throw new Error('Transfer cancelled');
+                            }
+
                             const sshSession = (session.tab as any).sshSession;
                             const downloadPromise = sftpSession.download(params.remotePath, fileDownload);
                             const result = await this.waitForTransferComplete(downloadPromise, fileDownload, sshSession);
 
+                            if (this.isTransferCancelled(task)) {
+                                throw new Error('Transfer cancelled');
+                            }
                             if (result === 'completed_via_polling') {
-                                this.logger.info(`[sftp_download] Transfer completed via polling fallback`);
+                                this.logger.info('[sftp_download] Transfer completed via polling fallback');
                             }
 
                             task.status = 'completed';
@@ -1123,22 +1209,17 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                             task.endTime = Date.now();
                             this.emitTransferUpdate();
                         } catch (error: any) {
-                            task.status = 'failed';
-                            task.error = error.message || String(error);
+                            if (!this.isTransferCancelled(task)) {
+                                task.status = 'failed';
+                                task.error = error.message || String(error);
+                            }
                             task.endTime = Date.now();
                             this.emitTransferUpdate();
-
-                            // Try to cancel/close if running
-                            if (fileDownload) {
-                                fileDownload.cancel();
-                            }
-
+                            fileDownload?.cancel();
                             throw error;
                         } finally {
-                            // Ensure file descriptor is closed
-                            if (fileDownload) {
-                                fileDownload.close();
-                            }
+                            task.cancelCallback = undefined;
+                            fileDownload?.close();
                         }
                     };
 
@@ -1157,7 +1238,11 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                             }]
                         };
                     } else {
-                        doDownload().catch(e => this.logger.error('Async download failed:', e));
+                        doDownload().catch(e => {
+                            if (!this.isTransferCancelled(task)) {
+                                this.logger.error('Async download failed:', e);
+                            }
+                        });
                         return {
                             content: [{
                                 type: 'text', text: JSON.stringify({
@@ -1291,15 +1376,24 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                     };
                 }
 
-                task.status = 'cancelled';
-                task.endTime = Date.now();
+                if (!await this.confirmSftpOperation(
+                    'sftp_cancel_transfer',
+                    task.connectionName,
+                    `${task.type}: ${task.localPath} ↔ ${task.remotePath}`
+                )) {
+                    return this.rejectedResponse('sftp_cancel_transfer');
+                }
+
+                // Use the same path as the UI cancel button: invokes cancelCallback to
+                // actually terminate the underlying stream/session, not just flip status
+                const cancelled = this.cancelTransferById(params.transferId);
 
                 return {
                     content: [{
                         type: 'text', text: JSON.stringify({
-                            success: true,
+                            success: cancelled,
                             transferId: params.transferId,
-                            message: 'Transfer cancelled'
+                            message: cancelled ? 'Transfer cancelled' : 'Transfer could not be cancelled'
                         })
                     }]
                 };

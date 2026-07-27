@@ -3,7 +3,8 @@ import { ConfigService } from 'tabby-core';
 import { LogEntry } from '../types/types';
 
 /**
- * MCP Logger Service - Centralized logging with file persistence
+ * MCP Logger Service - Centralized in-memory logging (ring buffer of 1000
+ * entries + console output). Export to file is available from the settings UI.
  */
 @Injectable({ providedIn: 'root' })
 export class McpLoggerService {
@@ -30,6 +31,9 @@ export class McpLoggerService {
     }
 
     private shouldLog(level: string): boolean {
+        // Errors are always logged, even when logging is disabled - silently
+        // swallowing failures makes user issues undiagnosable
+        if (level === 'error') return true;
         if (!this.isLoggingEnabled) return false;
 
         const levels = ['debug', 'info', 'warn', 'error'];

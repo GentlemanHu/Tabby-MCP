@@ -4,9 +4,7 @@ import { FormsModule } from '@angular/forms';
 import TabbyCoreModule, {
     AppService,
     ConfigProvider,
-    ConfigService,
-    ToolbarButtonProvider,
-    ProfilesService
+    ConfigService
 } from 'tabby-core';
 import { SettingsTabProvider } from 'tabby-settings';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
@@ -145,7 +143,7 @@ export default class McpModule implements OnDestroy {
     };
 
     private shutdownServer(reason: string): void {
-        if (this.shutdownInProgress || !this.mcpService.isServerRunning()) {
+        if (this.shutdownInProgress) {
             return;
         }
 

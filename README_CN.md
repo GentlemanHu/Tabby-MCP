@@ -14,7 +14,7 @@
 
 **Tabby 终端的全功能 MCP 服务器插件**
 
-*将 AI 助手连接到您的终端 — 34 个 MCP 工具，包含 SFTP 支持*
+*将 AI 助手连接到您的终端 — 35 个 MCP 工具，包含 SFTP 支持*
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -81,8 +81,11 @@
 
 <div align="center">
   <h3>🔒 安全特性</h3>
-  <p>结对编程模式（命令确认对话框） • 完善的日志记录 • 安全的命令执行</p>
+  <p>命令、原始输入和敏感 SFTP 操作均使用非阻塞确认对话框 • 服务器仅监听本机回环地址 • 完善的日志记录</p>
 </div>
+
+
+> **v1.6.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input` 和敏感 SFTP 操作；两分钟无人处理时自动拒绝。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。网络仅限本机回环地址（`127.0.0.1`），两种 MCP 传输均验证 Origin，直连工具 API 默认关闭。
 
 ---
 
@@ -177,7 +180,7 @@ npm run build
   "mcpServers": {
     "Tabby MCP": {
       "type": "streamable_http",
-      "url": "http://localhost:3001/mcp"
+      "url": "http://127.0.0.1:3001/mcp"
     }
   }
 }
@@ -187,16 +190,16 @@ npm run build
 
 | 端点 | URL | 协议版本 |
 |------|-----|----------|
-| Streamable HTTP | `http://localhost:3001/mcp` | 2025-03-26 (推荐) |
-| Legacy SSE | `http://localhost:3001/sse` | 2024-11-05 |
-| 健康检查 | `http://localhost:3001/health` | - |
-| 服务器信息 | `http://localhost:3001/info` | - |
+| Streamable HTTP | `http://127.0.0.1:3001/mcp` | 2025-03-26 (推荐) |
+| Legacy SSE | `http://127.0.0.1:3001/sse` | 2024-11-05 |
+| 健康检查 | `http://127.0.0.1:3001/health` | - |
+| 服务器信息 | `http://127.0.0.1:3001/info` | - |
 
 ---
 
 ## 🛠️ 可用工具
 
-### 终端控制（7 个）
+### 终端控制（8 个）
 
 | 工具 | 说明 |
 |------|------|
@@ -207,6 +210,7 @@ npm run build
 | `abort_command` | 中止正在运行的命令 |
 | `get_command_status` | 监控活动命令状态 |
 | `focus_pane` | 聚焦分割视图中的特定窗格 |
+| `get_session_environment` | 探测 Shell/REPL 环境（可选，默认关闭） |
 
 > **v1.1 新功能**: 所有终端工具支持灵活定位：
 > - `sessionId`（稳定 UUID，推荐）
@@ -240,7 +244,7 @@ npm run build
 
 ### SFTP 操作（12 个）🆕
 
-> 需要 `tabby-ssh` 插件。如未安装，SFTP 工具自动禁用。
+> 需要 `tabby-ssh`。如果未安装，或在设置中关闭了 SFTP，新建 MCP 会话将不会暴露这 12 个工具。启用结对编程确认后，目录列表、元数据读取、文件读写、传输、删除、重命名、创建目录及取消传输均需用户批准。
 
 **基础操作：**
 
@@ -276,10 +280,13 @@ npm run build
 |------|------|--------|
 | 端口 | MCP 服务器端口 | 3001 |
 | 启动时运行 | 自动启动服务器 | true |
-| 结对编程模式 | 执行前确认 | true |
+| 结对编程模式 | 确认命令、原始输入和敏感 SFTP 操作 | true |
+| SFTP 操作确认 | 将确认对话框应用于敏感 SFTP 操作（`send_input` 始终遵循命令确认设置） | true |
 | 会话跟踪 | 使用稳定 UUID | true |
 | 后台执行 | 无需聚焦执行 | false |
 | SFTP 启用 | 启用 SFTP 工具 | true |
+| 环境探测 | 暴露 `get_session_environment` | false |
+| 直连工具 API | 启用兼容端点 `/api/tool/:name`（仅支持手动配置） | false |
 
 ---
 
@@ -295,7 +302,7 @@ npm run build
 > - 对于分割窗格，命令发送到 `sessionId` 指定的窗格，而非聚焦的窗格
 > - 危险命令可能在你不知情的情况下执行
 
-> ✅ **建议：** 保持"结对编程模式"开启并启用确认对话框以确保安全。
+> ✅ **建议：** 保持结对编程模式、确认对话框和文件操作确认开启。服务器仅监听 `127.0.0.1`；直连 `/api/tool/:name` 兼容 API 默认关闭。
 
 ---
 
@@ -330,7 +337,7 @@ npm run build
 
 | 特性 | 原项目 | 本项目 |
 |------|--------|--------|
-| MCP 工具 | 4 | **34** |
+| MCP 工具 | 4 | **35** |
 | 标签页管理 | ❌ | ✅ |
 | 配置文件/SSH | ❌ | ✅ |
 | SFTP 支持 | ❌ | ✅ |
@@ -343,182 +350,16 @@ npm run build
 
 ## 📝 更新日志
 
-### v1.6.1 (2026-06-06)
+### v1.6.3 (2026-07-27)
 
-**✨ 新特性：**
-- 🔍 **新增 `get_session_environment` 工具**
-  - 允许 AI 智能体主动探测终端的当前执行环境上下文。通过缓冲区启发式匹配，能够识别当前是否处于 Python、Node.js、MySQL、PostgreSQL 或标准的 Shell (bash/zsh) 环境中，避免发错指令。
-- 📦 **修复 NPM 发版配置**
-  - 修复 GitHub Actions 针对 NPM registry 推送 404 的问题，回退到传统的 `NODE_AUTH_TOKEN` 身份认证。
+- 修复 [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9)：结对编程确认现在覆盖 `send_input` 和敏感 SFTP 操作；取消传输会真正终止底层传输。
+- 修复 [Issue #7](https://github.com/GentlemanHu/Tabby-MCP/issues/7)：用非阻塞、可恢复焦点的对话框替代浏览器阻塞弹窗，并让命令聚焦行为遵循“自动聚焦终端”设置。
+- 修复 [Issue #5](https://github.com/GentlemanHu/Tabby-MCP/issues/5)：仅监听回环地址、启动退避重试、旧实例识别，以及同一安装实例间经过认证的端口交接。
+- 修复 SDK 1.25.2 下 Legacy SSE JSON 请求体处理、会话清理、失效 Streamable HTTP 会话、Origin 校验、fish 主动环境探测、SFTP 定位器一致性及 STDIO 重连/消息帧问题。
+- 固定 `@modelcontextprotocol/sdk` 为 1.25.2，提交 `package-lock.json`，并新增类型检查、冒烟测试和构建质量门禁。
+- 工具数量文档已校正为 35 个（通常可见 34 个；`get_session_environment` 为可选工具且默认关闭）。
 
-### v1.6.0 (2026-06-06)
-
-**🐛 问题修复：**
-- 🔧 **修复 `quick_connect` 假成功与协议误判问题**（引用 #3、#5、#6）
-  - `quick_connect` 现在与 `open_profile` 共用同一套 tab / session / ready 返回链路
-  - 修复新打开连接在 `SplitTabComponent` 包裹下返回错误 `tabId` / `tabIndex` 的问题
-  - `protocol="auto"` 现在会对 `user@host` 形式的目标优先按 SSH 解释，不再依赖 provider 注册顺序
-  - 新增显式协议支持：`ssh`、`telnet`、`socket`、`serial`
-  - 移除遗留的 SSH-only 参数校验，避免 `telnet://...` 这类 URI 被错误拒绝
-- 🔧 **改进插件退出清理逻辑**（引用 #5）
-  - 在插件/窗口卸载时尽力停止 MCP server，减少重启后端口残留问题
-
-### v1.6.2 (2026-06-06)
-
-**✨ 新功能：**
-- 🔍 **新增 `get_session_environment` 工具** (关联 #6)
-  - 允许 AI 智能体精准探测当前终端上下文（例如识别是否正在运行 Python、Node.js、MySQL、PostgreSQL、SQLite 或是标准 Shell）。
-  - 支持双模式：`heuristic`（基于 ANSI 洗版的被动启发式缓冲扫描）与 `active`（针对本地会话的低风险主动探测）。
-  - **默认关闭** 以确保 AI 行为一致性；工具仅在开启时动态注册。集成完整设置项及国际化风险提示。
-
-**🐛 问题修复：**
-- 🔧 **修复 NPM OIDC 发版工作流**：将发版恢复为 Node 24 下纯令牌验证，绕过 NPM 官方 OIDC 验证异常拦截导致的持续 404 错误。
-- 🔧 **修复插件启动崩溃**：解决了配置未就绪前提前拉取导致 `Cannot read properties of undefined (reading 'mcp')` 的严重异常。
-
-### v1.6.0 (2026-06-06)
-
-**🐛 问题修复：**
-- 🔧 **修复 `/api/tool/{name}` 端点返回 404** (Issue #4) - 工具 API 端点在 `configureExpress()` 中注册时 `toolCategories` 为空（Angular 依赖注入初始化顺序问题）
-  - 将 `configureToolEndpoints()` 移至 `startServer()` 中调用，此时所有工具已注册完毕
-  - 添加重复注册保护，防止服务器重启时路由重复注册
-
-### v1.4.0 (2026-03-02)
-
-**🐛 问题修复：**
-- 🔧 **修复日志导出双重序列化** (Issue #1) - 导出的 JSON 被错误地序列化为字符串而非正确的 JSON 格式
-- 🔧 **修复 MCP 配置类型** (Issue #2) - 配置示例现在正确显示 `streamable_http` 而非 `sse`
-- 🔧 **修复硬编码版本号** - `/health` 和 `/info` 端点现在使用 `PLUGIN_VERSION` 常量
-
-**🏗️ 架构改进：**
-- 🔒 **Per-session McpServer 隔离** - 每个 AI 客户端现在获得独立的 McpServer 实例
-  - 防止一个客户端断开/重连影响其他客户端的请求
-  - 修复 MCP SDK Bug #1459 过期回调干扰问题
-- 🔄 **SFTP 会话缓存重设计** - 将 `WeakMap` 替换为 `Map + TTL (5分钟)`
-  - 主动会话过期防止僵尸 SFTP 会话
-  - 使用 `stat('/')` 健康检查验证缓存有效性
-  - 传输过程中检测 SSH 断开
-  - 定期清理已关闭 SSH 会话的缓存
-
-**📦 构建和安装：**
-- 📝 修复安装脚本 (`install.sh` / `install.ps1`) 解压失败问题
-  - 压缩包目录名统一为 `tabby-mcp-server`
-  - 向后兼容旧版 `tabby-mcp` 目录名
-  - 新增 prerelease 支持
-  - 改进 JSON 解析（python3 回退）
-
-### v1.3.0 (2026-02-04)
-
-**问题修复：**
-- 🔧 修复会话断开误报问题 - `exec_command` 和 `send_input` 不再错误报告 "Session disconnected"
-  - 根因：`tab.destroyed` 是 `Subject<void>`（RxJS Observable），不是布尔值
-  - 现在正确使用 `session.open === false` 检测断开
-
-**清理：**
-- 🗑️ 移除无效的 SFTP「高级调优」设置（分块大小、并发数）
-- 🗑️ 移除过时的 `fastPut`/`fastGet` 检测代码
-
-**国际化：**
-- ✏️ 修复 SFTP 大小描述：将 "10 MB" 修正为 "10 GB"
-
-### v1.2.0 (2026-01-24)
-
-**🔧 关键问题修复：**
-- 🔴 **SFTP Session ID 混乱** - 修复了 SFTP 工具可能在错误的 SSH 服务器上执行的严重 Bug
-  - 根因：SFTP 与 Terminal 使用了独立的 Session Registry，导致 ID 不一致
-  - 修复：SFTP 现在与 Terminal 共享 Session Registry
-  - SFTP 不再在 sessionId 匹配失败时静默回退到第一个 SSH Tab
-- 🔴 **本地目录自动创建** - SFTP 下载现在会自动创建缺失的本地目录
-- 🔴 **错误信息修正** - 修复了本地目录不存在时误报"远程文件不存在"的问题
-
-**🎨 界面改进：**
-- 📋 **连接监控** - 设置页新增"Connections"按钮（始终可见）
-- 🛠️ **服务器生命周期** - 改进服务器重启，强制清理活动连接
-- 📊 **会话跟踪** - 新增会话元数据和活动历史记录
-
-**🔧 终端改进：**
-- 🐚 **Heredoc 支持** - 修复复杂 Shell 命令（如 Python heredoc）执行失败的问题
-- 📝 **详细日志** - 添加 `[findSSHSession]` 调试日志便于排查问题
-
-### v1.1.6 (2026-01-22)
-
-**改进优化：**
-- 🎨 **设置界面美化** - 重新设计的头部布局，包含紧凑的社交图标链接（GitHub, npm）
-- 🔗 **智能链接** - 所有外部链接现在都能正确通过默认浏览器打开
-- 🔢 **自动版本号** - 插件版本号现在自动从 `package.json` 读取，无需手动维护
-- 🧹 **界面精简** - 优化布局，移除冗余信息
-
-### v1.1.5 (2026-01-22)
-
-**新功能：**
-- 🌐 **国际化（i18n）** - 设置界面现支持多语言
-  - 英文（`en-US`、`en-GB`）
-  - 简体中文（`zh-CN`、`zh-TW`）
-  - 自动跟随 Tabby 语言设置
-  - 可扩展：添加 JSON 文件即可支持新语言
-
-### v1.1.4 (2026-01-22)
-
-**新功能：**
-- 🔄 **后台执行模式** - 无需切换终端焦点即可运行 MCP 命令
-  - 设置界面包含详细的风险警告
-  - 分割窗格焦点处理，精确定位目标窗格
-- 🐚 **多 Shell 兼容** - `exec_command` 现支持 Fish、Bash、Zsh 和 sh
-  - 从终端缓冲区自动检测 shell 类型
-  - 针对不同 shell 的命令包装器以正确捕获退出码
-
-**问题修复：**
-- 🔧 修复 `open_profile` SSH 就绪检测 - 不再在 SSH 连接前提前返回
-- 修复非 bash shell 的检测问题（Fish shell 使用 `$status` 而非 `$?`）
-
-### v1.1.3 (2026-01-22)
-
-**问题修复：**
-- 🔧 修复 `open_profile` 返回的 sessionId 与 `get_session_list` 不一致的问题
-- 修复 SSH 连接状态检测 - `ready` 现在正确反映整体连接状态
-
-**改进：**
-- `open_profile` 响应中更清晰的状态字段：
-  - `tabReady`：Tab/前端已初始化
-  - `sshConnected`：SSH 连接已建立（仅 SSH 配置文件）
-  - `ready`：整体就绪状态（对于 SSH：tabReady AND sshConnected）
-- 将所有 peerDependencies 标记为可选以防止不必要的包下载
-- 添加 `tabby-ssh` 到 devDependencies 以确保开发者构建稳定性
-
-### v1.1.2 (2026-01-22)
-
-**优化：**
-- 📦 通过将已打包的依赖移至 devDependencies 减小 npm 包大小
-- 所有依赖（express, zod, @modelcontextprotocol/sdk）现在已打包到 dist/index.js
-- 从 npm/Tabby 商店安装不再下载不必要的包
-
----
-
-### v1.1.1 (2026-01-21)
-
-**问题修复：**
-- 🔧 修复 Streamable HTTP 连接泄漏问题 - 客户端断开后连接未被清理
-- 添加 `transport.onclose` 处理器以正确清理关闭的会话
-- 增强 SSE 流关闭日志以便更好地调试
-
-### v1.1.0 (2026-01-20)
-
-**主要修复：**
-- **SFTP 工具完全重写** - 修复了所有 SFTP 工具返回 "No SSH session found" 的问题
-- 修复 SSH 标签页检测以正确处理 `SplitTabComponent` 内的标签
-- 修复 `get_terminal_buffer` 和 `select_tab` 无参数调用时返回错误的问题
-- 修复 `select_tab` 无法通过 tabId 找到标签页的问题
-- 修复 `quick_connect` 和 `open_profile` 参数验证问题
-
-**改进：**
-- 所有工具现在使用智能默认值：无参数 = 使用活跃会话/标签/第一个 SSH 会话
-- 更新文档：工具数量修正为 34（终端 7 + 标签 11 + 配置文件 4 + SFTP 12）
-- 添加详细的调试日志和更好的错误消息
-- 在文档中添加 `focus_pane` 和 `split_tab` 工具说明
-- 添加 Streamable HTTP 传输支持（协议 2025-03-26）
-- 设置：SFTP 大小限制现在使用 MB 而不是字节
-- 设置：更新 SFTP 说明（移除过时的 base64 警告）
-- `open_profile` 现在返回 sessionId，无需额外查询
-- 增强 SSH 连接状态检测，等待 SSH 会话真正建立
+完整版本历史请查看 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

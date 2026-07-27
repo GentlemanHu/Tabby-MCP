@@ -3,7 +3,8 @@ import { AppService, BaseTabComponent, ConfigService, SplitTabComponent } from '
 import { BaseTerminalTabComponent, XTermFrontend } from 'tabby-terminal';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import stripAnsi from 'strip-ansi';
-import { BehaviorSubject, Subscription, Subject, ReplaySubject, firstValueFrom } from 'rxjs';
+import { BehaviorSubject, Subscription, ReplaySubject } from 'rxjs';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { BaseToolCategory } from './base-tool-category';
 import { McpLoggerService } from '../services/mcpLogger.service';
@@ -81,12 +82,7 @@ export class TerminalToolCategory extends BaseToolCategory {
     public getOrCreateSessionId(tab: BaseTerminalTabComponent): string {
         let sessionId = this.tabToSessionId.get(tab);
         if (!sessionId) {
-            // Generate UUID
-            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-                const r = Math.random() * 16 | 0;
-                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
+            sessionId = randomUUID();
             this.tabToSessionId.set(tab, sessionId);
         }
         return sessionId;
@@ -428,10 +424,12 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                 }
 
                 try {
-                    // Focus terminal ONLY if background execution is disabled
-                    // Background mode allows AI to work on tabs without disturbing user's current focus
+                    // Focus terminal ONLY if background execution is disabled AND
+                    // the user has not turned off auto-focus (Issue #7: focus stealing
+                    // interrupts the user's typing/IME in other tabs)
                     const backgroundMode = this.config.store.mcp?.backgroundExecution?.enabled ?? false;
-                    if (!backgroundMode) {
+                    const autoFocus = this.config.store.mcp?.pairProgrammingMode?.autoFocusTerminal !== false;
+                    if (!backgroundMode && autoFocus) {
                         this.app.selectTab(session.tabParent);
                         // For split panes, also focus the specific pane
                         if (session.isSplit && session.tabParent instanceof SplitTabComponent) {
@@ -600,12 +598,27 @@ Special keys: \\x03 (Ctrl+C), \\x04 (Ctrl+D), \\x1b (Escape), \\r (Enter)`,
                     };
                 }
 
-                // Process escape sequences
                 const processedInput = input
                     .replace(/\\n/g, '\n')
                     .replace(/\\r/g, '\r')
                     .replace(/\\t/g, '\t')
                     .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+
+                // Raw input can execute commands through Enter/newline, so command
+                // confirmation must not be disabled by the separate SFTP approval option.
+                const pairMode = this.config.store.mcp?.pairProgrammingMode;
+                if (pairMode?.enabled && pairMode?.showConfirmationDialog) {
+                    const confirmed = await this.dialogService.showOperationConfirmation(
+                        'send_input',
+                        session.tab.title || `Terminal ${session.tabIndex}`,
+                        `Terminal input after escape decoding:\n${JSON.stringify(processedInput)}`
+                    );
+                    if (!confirmed) {
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Input rejected by user' }) }]
+                        };
+                    }
+                }
 
                 try {
                     session.tab.sendInput(processedInput);
@@ -753,65 +766,11 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                 const useEnhancedHeuristics = environmentDetectionConfig?.useEnhancedHeuristics !== false;
                 const detectionMode = environmentDetectionConfig?.mode ?? 'heuristic';
                 const bufferContent = this.getTerminalBufferText(session);
-                const normalizedLines = bufferContent
-                    .split('\n')
-                    .map(line => {
-                        const raw = line.trimEnd();
-                        const clean = useEnhancedHeuristics
-                            ? stripAnsi(raw).replace(/\[[0-9;?]*[a-zA-Z]/g, '').trim()
-                            : raw.trim();
-                        return { raw, clean };
-                    })
-                    .filter(line => line.raw.length > 0 || line.clean.length > 0);
-
-                const replMatchers: Array<{ environment: string; pattern: RegExp }> = [
-                    { environment: 'python', pattern: /^>>>$/ },
-                    { environment: 'ruby', pattern: /^(irb>|irb\(main\):.*)$/ },
-                    { environment: 'mysql', pattern: /^mysql>$/ },
-                    { environment: 'postgres', pattern: /^(postgres[=#>-]?|\w+=>|\w+=#)$/ },
-                    { environment: 'sqlite', pattern: /^sqlite>$/ },
-                    { environment: 'mongodb', pattern: /^(mongo>|mongosh>|Enterprise\s.+>)$/ },
-                    { environment: 'redis', pattern: /^127\.0\.0\.1:\d+>$/ },
-                    { environment: 'node', pattern: /^>$/ },
-                ];
-
-                let environment = 'unknown';
-                let isShell = false;
-                let promptRaw = '';
-                let promptClean = '';
-                const fallbackLine = normalizedLines.length > 0 ? normalizedLines[normalizedLines.length - 1] : { raw: '', clean: '' };
-
-                for (let i = normalizedLines.length - 1; i >= 0; i--) {
-                    const candidate = normalizedLines[i];
-                    if (!candidate.clean) {
-                        continue;
-                    }
-
-                    const replMatch = replMatchers.find(m => m.pattern.test(candidate.clean));
-                    if (replMatch) {
-                        environment = replMatch.environment;
-                        promptRaw = candidate.raw;
-                        promptClean = candidate.clean;
-                        break;
-                    }
-
-                    if (/[$#%❯➜]\s*$/.test(candidate.clean)) {
-                        isShell = true;
-                        const detectedShell = this.detectShellType(session);
-                        environment = detectedShell === 'sh' ? 'shell' : detectedShell;
-                        promptRaw = candidate.raw;
-                        promptClean = candidate.clean;
-                        break;
-                    }
-                }
-
-                if (!promptRaw) {
-                    isShell = true;
-                    const detectedShell = this.detectShellType(session);
-                    environment = detectedShell === 'sh' ? 'shell' : detectedShell;
-                    promptRaw = fallbackLine.raw;
-                    promptClean = fallbackLine.clean;
-                }
+                const parsed = this.parseEnvironmentFromBuffer(session, bufferContent, useEnhancedHeuristics);
+                let environment = parsed.environment;
+                let isShell = parsed.isShell;
+                const promptRaw = parsed.promptRaw;
+                const promptClean = parsed.promptClean;
 
                 const tabAny = session.tab as any;
                 const profile = tabAny.profile ? {
@@ -858,7 +817,10 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
         }
 
         const shell = this.detectShellType(session);
-        const command = `printf '__MCP_ENV__:'; if [ -n "$VIRTUAL_ENV" ]; then printf 'python-venv'; elif [ -n "$CONDA_DEFAULT_ENV" ]; then printf 'python-conda'; elif [ -n "$IN_NIX_SHELL" ]; then printf 'nix-shell'; else printf 'shell'; fi; printf ':__MCP_ENV__'`;
+        // fish does not support POSIX `if [ -n ... ]; then` syntax, so use a fish-native probe
+        const command = shell === 'fish'
+            ? `printf '__MCP_ENV__:'; if test -n "$VIRTUAL_ENV"; printf 'python-venv'; else if test -n "$CONDA_DEFAULT_ENV"; printf 'python-conda'; else if test -n "$IN_NIX_SHELL"; printf 'nix-shell'; else; printf 'shell'; end; printf ':__MCP_ENV__'`
+            : `printf '__MCP_ENV__:'; if [ -n "$VIRTUAL_ENV" ]; then printf 'python-venv'; elif [ -n "$CONDA_DEFAULT_ENV" ]; then printf 'python-conda'; elif [ -n "$IN_NIX_SHELL" ]; then printf 'nix-shell'; else printf 'shell'; fi; printf ':__MCP_ENV__'`;
 
         try {
             const startMarker = `__MCP_ENV_START_${Date.now()}__`;
@@ -1191,8 +1153,6 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
         isAborted: () => boolean
     ): Promise<CommandResult> {
         const startTime = Date.now();
-        let lastBufferLength = 0;
-        let stableCount = 0;
 
         // Get timing config (with fallback defaults)
         const timing = this.config.store.mcp?.timing || {};
@@ -1263,8 +1223,6 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                     let output = buffer.substring(0, endIndex).trim();
                     const exitCode = parseInt(endMatch[1], 10);
 
-                    // Try to clean up command echo if it appears at the very top (unlikely in this case, but good practice)
-                    const lines = output.split('\n');
                     // Add a warning note to the output so the user/LLM knows it's truncated
                     output = `[MCP Warning: Output truncated, start marker missing]\n${output}`;
 
@@ -1274,14 +1232,6 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                         exitCode
                     };
                 }
-            }
-
-            // Track buffer stability (helps detect when output is complete)
-            if (buffer.length === lastBufferLength) {
-                stableCount++;
-            } else {
-                stableCount = 0;
-                lastBufferLength = buffer.length;
             }
 
             // Wait between checks (configurable via Settings → MCP → Timing)

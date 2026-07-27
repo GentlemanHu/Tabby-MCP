@@ -4,6 +4,7 @@ import { Subscription } from 'rxjs';
 import { McpService } from '../services/mcpService';
 import { McpLoggerService } from '../services/mcpLogger.service';
 import { McpI18nService } from '../services/i18n.service';
+import { DialogService } from '../services/dialog.service';
 import { SFTPToolCategory } from '../tools/sftp';
 import { PLUGIN_VERSION } from '../version';
 
@@ -26,7 +27,6 @@ import { PLUGIN_VERSION } from '../version';
           <span class="version-badge" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/releases')">v{{ version }}</span>
         </div>
       </div>
-      
       <div class="form-group">
         <label>{{ t('mcp.server.status') }}</label>
         <div class="status-container">
@@ -43,24 +43,21 @@ import { PLUGIN_VERSION } from '../version';
           <button class="btn btn-secondary" (click)="restartServer()" *ngIf="isRunning">
             {{ t('mcp.server.restart') }}
           </button>
-          <button class="btn btn-outline-info" (click)="openMonitor()" title="Monitor Connections">
-            📋 Connections
+          <button class="btn btn-outline-info" (click)="openMonitor()" title="{{ t('mcp.monitor.connections') }}">
+            📋 {{ t('mcp.monitor.connections') }}
           </button>
-          <button class="btn btn-outline-success" (click)="openTransferMonitor()" title="SFTP Transfers">
-            📤 Transfers
+          <button class="btn btn-outline-success" (click)="openTransferMonitor()" title="{{ t('mcp.monitor.transfers') }}">
+            📤 {{ t('mcp.monitor.transfers') }}
           </button>
         </div>
       </div>
-
       <hr />
-
       <div class="form-group">
         <label>{{ t('mcp.config.port') }}</label>
-        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.port" 
+        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.port"
                placeholder="3001" min="1024" max="65535" (change)="saveConfig()">
         <small class="form-text text-muted">{{ t('mcp.config.port.desc') }}</small>
       </div>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -69,11 +66,8 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <hr />
-
       <h4>📝 {{ t('mcp.logging.title') }}</h4>
-      
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -82,7 +76,6 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.enableLogging">
         <label>{{ t('mcp.logging.level') }}</label>
         <select class="form-control" [(ngModel)]="config.store.mcp.logLevel" (change)="saveConfig()">
@@ -92,17 +85,13 @@ import { PLUGIN_VERSION } from '../version';
           <option value="error">{{ t('mcp.logging.level.error') }}</option>
         </select>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.enableLogging">
         <button class="btn btn-sm btn-secondary" (click)="viewLogs()">{{ t('mcp.logging.viewLogs') }}</button>
         <button class="btn btn-sm btn-outline-secondary ml-2" (click)="exportLogsToFile()">{{ t('mcp.logging.exportJson') }}</button>
         <button class="btn btn-sm btn-outline-secondary ml-2" (click)="clearLogs()">{{ t('mcp.logging.clearLogs') }}</button>
       </div>
-
       <hr />
-
       <h4>🤝 {{ t('mcp.pairProgramming.title') }}</h4>
-      
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -114,7 +103,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.pairProgramming.enable.desc') }}
         </small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.pairProgrammingMode.enabled">
         <div class="checkbox">
           <label>
@@ -123,7 +111,17 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
+      <div class="form-group" *ngIf="config.store.mcp.pairProgrammingMode.enabled && config.store.mcp.pairProgrammingMode.showConfirmationDialog">
+        <div class="checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="config.store.mcp.pairProgrammingMode.confirmFileOperations" (change)="saveConfig()">
+            {{ t('mcp.pairProgramming.confirmFileOps') }}
+          </label>
+        </div>
+        <small class="form-text text-muted">
+          {{ t('mcp.pairProgramming.confirmFileOps.desc') }}
+        </small>
+      </div>
       <div class="form-group" *ngIf="config.store.mcp.pairProgrammingMode.enabled">
         <div class="checkbox">
           <label>
@@ -132,14 +130,11 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <hr />
-
       <h4>🎯 {{ t('mcp.sessionTracking.title') }}</h4>
       <small class="form-text text-muted mb-2">
         {{ t('mcp.sessionTracking.desc') }}
       </small>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -151,7 +146,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.sessionTracking.stableIds.desc') }}
         </small>
       </div>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -160,7 +154,6 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -169,7 +162,6 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -178,14 +170,11 @@ import { PLUGIN_VERSION } from '../version';
           </label>
         </div>
       </div>
-
       <hr />
-
       <h4>🔄 {{ t('mcp.backgroundExecution.title') }}</h4>
       <small class="form-text text-muted mb-2">
         {{ t('mcp.backgroundExecution.desc') }}
       </small>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -197,7 +186,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.backgroundExecution.enable.desc') }}
         </small>
       </div>
-
       <div class="alert alert-warning" *ngIf="config.store.mcp.backgroundExecution.enabled">
         <strong>⚠️ {{ t('mcp.backgroundExecution.warning.title') }}</strong>
         <ul class="mb-0">
@@ -214,14 +202,11 @@ import { PLUGIN_VERSION } from '../version';
           <li>{{ t('mcp.backgroundExecution.safety.monitor') }}</li>
         </ul>
       </div>
-
       <hr />
-
       <h4>🧭 {{ t('mcp.environmentDetection.title') }}</h4>
       <small class="form-text text-muted mb-2">
         {{ t('mcp.environmentDetection.desc') }}
       </small>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -233,7 +218,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.environmentDetection.enable.desc') }}
         </small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.environmentDetection.enabled">
         <div class="checkbox">
           <label>
@@ -245,7 +229,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.environmentDetection.enhanced.desc') }}
         </small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.environmentDetection.enabled">
         <label>{{ t('mcp.environmentDetection.mode') }}</label>
         <select class="form-control" [(ngModel)]="config.store.mcp.environmentDetection.mode" (change)="saveConfig()">
@@ -256,7 +239,6 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.environmentDetection.mode.desc') }}
         </small>
       </div>
-
       <div class="alert alert-warning" *ngIf="config.store.mcp.environmentDetection.enabled">
         <strong>⚠️ {{ t('mcp.environmentDetection.warning.title') }}</strong>
         <ul class="mb-0">
@@ -266,11 +248,8 @@ import { PLUGIN_VERSION } from '../version';
           <li>{{ t('mcp.environmentDetection.warning.verify') }}</li>
         </ul>
       </div>
-
       <hr />
-
       <h4>🧪 {{ t('mcp.experimental.title') || 'Experimental Features' }}</h4>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -285,14 +264,11 @@ import { PLUGIN_VERSION } from '../version';
             <strong>ℹ️ Note:</strong> {{ t('mcp.experimental.streamCapture.note') }}
         </div>
       </div>
-
       <hr />
-
       <h4>📁 {{ t('mcp.sftp.title') }}</h4>
       <small class="form-text text-muted mb-2">
         {{ t('mcp.sftp.desc') }}
       </small>
-
       <div class="form-group">
         <div class="checkbox">
           <label>
@@ -304,11 +280,10 @@ import { PLUGIN_VERSION } from '../version';
           {{ t('mcp.sftp.enable.desc') }}
         </small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.sftp.enabled">
         <label>{{ t('mcp.sftp.maxReadSize') }}</label>
         <div class="input-group">
-          <input type="number" class="form-control" [ngModel]="getMaxFileSizeMB()" 
+          <input type="number" class="form-control" [ngModel]="getMaxFileSizeMB()"
                  (ngModelChange)="setMaxFileSizeMB($event)" placeholder="1" min="0.1" max="100" step="0.5">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.mb') }}</span>
@@ -316,11 +291,10 @@ import { PLUGIN_VERSION } from '../version';
         </div>
         <small class="form-text text-muted">{{ t('mcp.sftp.maxReadSize.desc') }}</small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.sftp.enabled">
         <label>{{ t('mcp.sftp.maxUploadSize') }}</label>
         <div class="input-group">
-          <input type="number" class="form-control" [ngModel]="getMaxUploadSizeMB()" 
+          <input type="number" class="form-control" [ngModel]="getMaxUploadSizeMB()"
                  (ngModelChange)="setMaxUploadSizeMB($event)" placeholder="10" min="0.1" max="102400" step="1">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.mb') }}</span>
@@ -328,11 +302,10 @@ import { PLUGIN_VERSION } from '../version';
         </div>
         <small class="form-text text-muted">{{ t('mcp.sftp.maxUploadSize.desc') }}</small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.sftp.enabled">
         <label>{{ t('mcp.sftp.maxDownloadSize') }}</label>
         <div class="input-group">
-          <input type="number" class="form-control" [ngModel]="getMaxDownloadSizeMB()" 
+          <input type="number" class="form-control" [ngModel]="getMaxDownloadSizeMB()"
                  (ngModelChange)="setMaxDownloadSizeMB($event)" placeholder="10" min="0.1" max="102400" step="1">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.mb') }}</span>
@@ -340,11 +313,10 @@ import { PLUGIN_VERSION } from '../version';
         </div>
         <small class="form-text text-muted">{{ t('mcp.sftp.maxDownloadSize.desc') }}</small>
       </div>
-
       <div class="form-group" *ngIf="config.store.mcp.sftp.enabled">
         <label>{{ t('mcp.sftp.timeout') }}</label>
         <div class="input-group">
-          <input type="number" class="form-control" [ngModel]="getTimeoutSeconds()" 
+          <input type="number" class="form-control" [ngModel]="getTimeoutSeconds()"
                  (ngModelChange)="setTimeoutSeconds($event)" placeholder="60" min="5" max="300" step="5">
           <div class="input-group-append">
             <span class="input-group-text">{{ t('mcp.common.sec') }}</span>
@@ -352,7 +324,6 @@ import { PLUGIN_VERSION } from '../version';
         </div>
         <small class="form-text text-muted">{{ t('mcp.sftp.timeout.desc') }}</small>
       </div>
-
       <div class="alert alert-info" *ngIf="config.store.mcp.sftp.enabled">
         <strong>ℹ️ {{ t('mcp.sftp.notes.title') }}</strong>
         <ul class="mb-0">
@@ -362,77 +333,66 @@ import { PLUGIN_VERSION } from '../version';
           <li>{{ t('mcp.sftp.notes.limit') }}</li>
         </ul>
       </div>
-
       <hr />
-
       <h4>⏱️ {{ t('mcp.timing.title') }}</h4>
       <small class="form-text text-muted mb-2">
         {{ t('mcp.timing.desc') }}
       </small>
-
       <div class="form-group">
         <label>{{ t('mcp.timing.pollInterval') }}</label>
-        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.pollInterval" 
+        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.pollInterval"
                placeholder="100" min="50" max="1000" (change)="saveConfig()">
         <small class="form-text text-muted">{{ t('mcp.timing.pollInterval.desc') }}</small>
       </div>
-
       <div class="form-group">
         <label>{{ t('mcp.timing.initialDelay') }}</label>
-        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.initialDelay" 
+        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.initialDelay"
                placeholder="0" min="0" max="5000" (change)="saveConfig()">
         <small class="form-text text-muted">{{ t('mcp.timing.initialDelay.desc') }}</small>
       </div>
-
       <div class="form-group">
         <label>{{ t('mcp.timing.sessionStableChecks') }}</label>
-        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.sessionStableChecks" 
+        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.sessionStableChecks"
                placeholder="5" min="1" max="20" (change)="saveConfig()">
         <small class="form-text text-muted">{{ t('mcp.timing.sessionStableChecks.desc') }}</small>
       </div>
-
       <div class="form-group">
         <label>{{ t('mcp.timing.sessionPollInterval') }}</label>
-        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.sessionPollInterval" 
+        <input type="number" class="form-control" [(ngModel)]="config.store.mcp.timing.sessionPollInterval"
                placeholder="200" min="100" max="2000" (change)="saveConfig()">
         <small class="form-text text-muted">{{ t('mcp.timing.sessionPollInterval.desc') }}</small>
       </div>
-
       <hr />
-
       <h4>🔗 {{ t('mcp.connectionInfo.title') }}</h4>
       <div class="connection-info">
-        <p><strong>{{ t('mcp.connectionInfo.streamable') }}</strong> <code>http://localhost:{{ config.store.mcp.port }}/mcp</code></p>
-        <p><strong>{{ t('mcp.connectionInfo.legacySse') }}</strong> <code>http://localhost:{{ config.store.mcp.port }}/sse</code></p>
-        <p><strong>{{ t('mcp.connectionInfo.healthCheck') }}</strong> <code>http://localhost:{{ config.store.mcp.port }}/health</code></p>
-        
+        <p><strong>{{ t('mcp.connectionInfo.streamable') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/mcp</code></p>
+        <p><strong>{{ t('mcp.connectionInfo.legacySse') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/sse</code></p>
+        <p><strong>{{ t('mcp.connectionInfo.healthCheck') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/health</code></p>
         <div class="mt-3">
           <p class="text-muted">{{ t('mcp.connectionInfo.addToClient') }}</p>
           <pre class="config-example">{{getConfigExample()}}</pre>
           <button class="btn btn-sm btn-outline-primary" (click)="copyConfig()">{{ t('mcp.connectionInfo.copyConfig') }}</button>
         </div>
       </div>
-
       <div class="save-status mt-3" *ngIf="saveMessage">
         <span class="text-success">{{ saveMessage }}</span>
       </div>
-
       <!-- Connection Monitor Modal -->
       <div class="modal-overlay" *ngIf="showMonitor" (click)="closeMonitor()">
         <div class="modal-content" (click)="$event.stopPropagation()">
           <div class="modal-header">
-            <h4>Active Connections ({{ sessions.length }})</h4>
+            <h4>{{ t('mcp.monitor.activeConnections') }} ({{ sessions.length }})</h4>
             <button class="action-btn" (click)="closeMonitor()">✕</button>
           </div>
           <div class="modal-body">
             <table class="session-table">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Session ID / Client</th>
-                  <th>Duration</th>
-                  <th>Last Activity</th>
-                  <th>Action</th>
+                  <th>{{ t('mcp.monitor.type') }}</th>
+                  <th>{{ t('mcp.monitor.sessionClient') }}</th>
+                  <th>{{ t('mcp.monitor.duration') }}</th>
+                  <th>{{ t('mcp.monitor.lastActivity') }}</th>
+                  <th>{{ t('mcp.monitor.action') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -449,90 +409,89 @@ import { PLUGIN_VERSION } from '../version';
                     <div>{{ formatTime(s.lastActive) }}</div>
                     <div style="font-size:0.85em; color: #88c0d0; font-weight: bold">{{ s.lastActivity }}</div>
                     <div style="margin-top:4px" *ngIf="s.history && s.history.length">
-                       <div style="font-size:0.75em; opacity:0.5; margin-bottom:2px">History:</div>
+                       <div style="font-size:0.75em; opacity:0.5; margin-bottom:2px">{{ t('mcp.monitor.history') }}</div>
                        <ul class="history-list">
                          <li *ngFor="let h of s.history">{{ h }}</li>
                        </ul>
                     </div>
                   </td>
                   <td>
-                    <button class="action-btn btn-danger-sm" (click)="closeSession(s.id)">Disconnect</button>
+                    <button class="action-btn btn-danger-sm" (click)="closeSession(s.id)">{{ t('mcp.monitor.disconnect') }}</button>
                   </td>
                 </tr>
                 <tr *ngIf="sessions.length === 0">
-                  <td colspan="5" style="text-align: center; padding: 2rem; opacity: 0.6">No active connections</td>
+                  <td colspan="5" style="text-align: center; padding: 2rem; opacity: 0.6">{{ t('mcp.monitor.noConnections') }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="modal-header" style="border-top: 1px solid rgba(255,255,255,0.1); border-bottom: none; justify-content: flex-end; padding: 0.75rem;">
-             <button class="btn btn-secondary btn-sm" (click)="refreshSessions()">Refresh</button>
-             <button class="btn btn-primary btn-sm ml-2" (click)="closeMonitor()">Close</button>
+             <button class="btn btn-secondary btn-sm" (click)="refreshSessions()">{{ t('mcp.monitor.refresh') }}</button>
+             <button class="btn btn-primary btn-sm ml-2" (click)="closeMonitor()">{{ t('mcp.monitor.close') }}</button>
           </div>
         </div>
       </div>
-
       <!-- Transfer Monitor Modal -->
       <div class="modal-overlay" *ngIf="showTransferMonitor" (click)="closeTransferMonitor()">
         <div class="modal-content" (click)="$event.stopPropagation()">
           <div class="modal-header">
-            <h4>📤 SFTP Transfers ({{ transfers.length }})</h4>
+            <h4>📤 {{ t('mcp.monitor.sftpTransfers') }} ({{ transfers.length }})</h4>
             <button class="action-btn" (click)="closeTransferMonitor()">✕</button>
           </div>
           <div class="modal-body">
             <table class="session-table">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>File</th>
-                  <th>Connection</th>
-                  <th>Progress</th>
-                  <th>Status</th>
-                  <th>Action</th>
+                  <th>{{ t('mcp.monitor.type') }}</th>
+                  <th>{{ t('mcp.monitor.file') }}</th>
+                  <th>{{ t('mcp.monitor.connection') }}</th>
+                  <th>{{ t('mcp.monitor.progress') }}</th>
+                  <th>{{ t('mcp.monitor.status') }}</th>
+                  <th>{{ t('mcp.monitor.action') }}</th>
                 </tr>
               </thead>
               <tbody>
-                <tr *ngFor="let t of transfers">
+                <tr *ngFor="let tr of transfers">
                   <td>
-                    <span class="transfer-type" [class.upload]="t.type==='upload'" [class.download]="t.type==='download'">
-                      {{ t.type === 'upload' ? '↑' : '↓' }}
+                    <span class="transfer-type" [class.upload]="tr.type==='upload'" [class.download]="tr.type==='download'">
+                      {{ tr.type === 'upload' ? '↑' : '↓' }}
                     </span>
                   </td>
                   <td>
-                    <div class="mono" title="{{t.remotePath}}">{{ getFileName(t.remotePath) }}</div>
-                    <div style="font-size:0.75em; opacity:0.5">{{ t.remotePath }}</div>
+                    <div class="mono" title="{{tr.remotePath}}">{{ getFileName(tr.remotePath) }}</div>
+                    <div style="font-size:0.75em; opacity:0.5">{{ tr.remotePath }}</div>
                   </td>
-                  <td>{{ t.connectionName }}</td>
+                  <td>{{ tr.connectionName }}</td>
                   <td>
                     <div class="progress-bar-container">
-                      <div class="progress-bar-fill" [style.width.%]="t.progress"></div>
-                      <span class="progress-text">{{ t.progress }}%</span>
+                      <div class="progress-bar-fill" [style.width.%]="tr.progress"></div>
+                      <span class="progress-text">{{ tr.progress }}%</span>
                     </div>
                     <div style="font-size:0.75em; opacity:0.6">
-                      <span *ngIf="t.speed">{{ formatBytes(t.speed) }}/s</span>
-                      <span *ngIf="t.bytesTransferred"> · {{ formatBytes(t.bytesTransferred) }} / {{ formatBytes(t.totalBytes) }}</span>
+                      <span *ngIf="tr.speed">{{ formatBytes(tr.speed) }}/s</span>
+                      <span *ngIf="tr.bytesTransferred"> · {{ formatBytes(tr.bytesTransferred) }} / {{ formatBytes(tr.totalBytes) }}</span>
                     </div>
                   </td>
                   <td>
-                    <span class="status-badge" [class.pending]="t.status==='pending'" [class.running]="t.status==='running'"
-                          [class.completed]="t.status==='completed'" [class.failed]="t.status==='failed'" [class.cancelled]="t.status==='cancelled'">
-                      {{ t.status }}
+                    <span class="status-badge" [class.pending]="tr.status==='pending'" [class.running]="tr.status==='running'"
+                          [class.completed]="tr.status==='completed'" [class.failed]="tr.status==='failed'" [class.cancelled]="tr.status==='cancelled'">
+                      {{ tr.status }}
                     </span>
                   </td>
                   <td>
-                    <button class="action-btn btn-danger-sm" (click)="cancelTransfer(t.id)" *ngIf="t.status==='pending' || t.status==='running'">Cancel</button>
+                    <button class="action-btn btn-danger-sm" (click)="cancelTransfer(tr.id)" *ngIf="tr.status==='pending' || tr.status==='running'">{{ t('mcp.monitor.cancel') }}</button>
                   </td>
                 </tr>
                 <tr *ngIf="transfers.length === 0">
-                  <td colspan="6" style="text-align: center; padding: 2rem; opacity: 0.6">No transfers</td>
+                  <td colspan="6" style="text-align: center; padding: 2rem; opacity: 0.6">{{ t('mcp.monitor.noTransfers') }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="modal-header" style="border-top: 1px solid rgba(255,255,255,0.1); border-bottom: none; justify-content: flex-end; padding: 0.75rem;">
-             <button class="btn btn-secondary btn-sm" (click)="clearCompletedTransfers()">Clear History</button>
-             <button class="btn btn-secondary btn-sm ml-2" (click)="refreshTransfers()">Refresh</button>
-             <button class="btn btn-primary btn-sm ml-2" (click)="closeTransferMonitor()">Close</button>
+             <button class="btn btn-secondary btn-sm" (click)="clearCompletedTransfers()">{{ t('mcp.monitor.clearHistory') }}</button>
+             <button class="btn btn-secondary btn-sm ml-2" (click)="refreshTransfers()">{{ t('mcp.monitor.refresh') }}</button>
+             <button class="btn btn-primary btn-sm ml-2" (click)="closeTransferMonitor()">{{ t('mcp.monitor.close') }}</button>
           </div>
         </div>
       </div>
@@ -799,12 +758,14 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   saveMessage = '';
   private configSub?: Subscription;
   private lastEnvironmentDetectionEnabled = false;
+  private lastSftpEnabled = true;
 
   constructor(
     public config: ConfigService,
     private mcpService: McpService,
     private logger: McpLoggerService,
     private i18n: McpI18nService,
+    private dialogService: DialogService,
     private sftpTools: SFTPToolCategory
   ) { }
 
@@ -858,8 +819,12 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     if (this.config.store.mcp.sftp.maxDownloadSize === undefined) {
       this.config.store.mcp.sftp.maxDownloadSize = 10 * 1024 * 1024 * 1024;
     }
+    if (this.config.store.mcp.pairProgrammingMode.confirmFileOperations === undefined) {
+      this.config.store.mcp.pairProgrammingMode.confirmFileOperations = true;
+    }
 
     this.lastEnvironmentDetectionEnabled = this.config.store.mcp.environmentDetection.enabled === true;
+    this.lastSftpEnabled = this.config.store.mcp.sftp.enabled !== false;
   }
 
   ngOnDestroy(): void {
@@ -896,7 +861,9 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   viewLogs(): void {
     const logs = this.logger.exportLogs();
     console.log('MCP Logs:', logs);
-    alert('Logs have been printed to the console (Cmd+Option+I)');
+    // Native alert() breaks keyboard/IME focus in the renderer (Issue #7) - use the save message instead
+    this.saveMessage = this.t('mcp.logging.printedToConsole');
+    setTimeout(() => { this.saveMessage = ''; }, 5000);
   }
 
   exportLogsToFile(): void {
@@ -937,18 +904,27 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
 
   async saveConfig(): Promise<void> {
     const environmentDetectionEnabled = this.config.store.mcp?.environmentDetection?.enabled === true;
-    const environmentDetectionChanged = environmentDetectionEnabled !== this.lastEnvironmentDetectionEnabled;
+    const sftpEnabled = this.config.store.mcp?.sftp?.enabled !== false;
+    const toolVisibilityChanged =
+      environmentDetectionEnabled !== this.lastEnvironmentDetectionEnabled ||
+      sftpEnabled !== this.lastSftpEnabled;
 
     await this.config.save();
     this.lastEnvironmentDetectionEnabled = environmentDetectionEnabled;
+    this.lastSftpEnabled = sftpEnabled;
 
-    if (environmentDetectionChanged && this.isRunning) {
-      const shouldRestart = confirm(this.t('mcp.environmentDetection.restart.confirm'));
+    if (toolVisibilityChanged && this.isRunning) {
+      // Non-blocking dialog: native confirm() breaks keyboard/IME focus (Issue #7)
+      const shouldRestart = await this.dialogService.showOperationConfirmation(
+        this.t('mcp.server.restart'),
+        'MCP',
+        this.t('mcp.tools.restart.confirm')
+      );
       if (shouldRestart) {
         await this.restartServer();
-        this.saveMessage = this.t('mcp.environmentDetection.restart.done');
+        this.saveMessage = this.t('mcp.tools.restart.done');
       } else {
-        this.saveMessage = this.t('mcp.environmentDetection.restart.later');
+        this.saveMessage = this.t('mcp.tools.restart.later');
       }
     } else {
       this.saveMessage = this.t('mcp.common.saved');
@@ -999,7 +975,7 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
       mcpServers: {
         'Tabby MCP': {
           type: 'streamable_http',
-          url: `http://localhost:${port}/mcp`
+          url: `http://127.0.0.1:${port}/mcp`
         }
       }
     }, null, 2);
@@ -1031,7 +1007,13 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   }
 
   async closeSession(sessionId: string): Promise<void> {
-    if (confirm(this.t('Are you sure you want to disconnect this session?'))) {
+    // Non-blocking dialog with a proper i18n key (was a raw English sentence passed as key)
+    const confirmed = await this.dialogService.showOperationConfirmation(
+      this.t('mcp.monitor.disconnect'),
+      'MCP',
+      this.t('mcp.monitor.disconnect.confirm')
+    );
+    if (confirmed) {
       await this.mcpService.closeSession(sessionId);
       this.refreshSessions();
     }

@@ -4,7 +4,6 @@ import express, { Request, Response } from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { z } from 'zod';
 import { IncomingMessage, ServerResponse } from 'http';
 import * as http from 'http';
 import { Socket } from 'net';
@@ -31,15 +30,22 @@ export class McpService {
     private httpServer?: http.Server;
     private sockets = new Set<Socket>();
     private isRunning = false;
+    private startPromise?: Promise<void>;
+    private lifecycleGeneration = 0;
     private toolCategories: ToolCategory[] = [];
     // Store tool definitions for registering with each new server
     private registeredTools: { name: string, description: string, schema: any, handler: any }[] = [];
     // Track whether tool endpoints have been registered to prevent duplicates on restart
     private toolEndpointsConfigured = false;
+    private readonly instanceId = randomUUID();
+    private controlToken?: string;
 
     private isToolEnabled(toolName: string): boolean {
         if (toolName === 'get_session_environment') {
             return this.config?.store?.mcp?.environmentDetection?.enabled === true;
+        }
+        if (toolName.startsWith('sftp_')) {
+            return this.config?.store?.mcp?.sftp?.enabled !== false;
         }
         return true;
     }
@@ -75,7 +81,8 @@ export class McpService {
         });
 
         // Register enabled tools with this server instance
-        for (const toolDef of this.registeredTools.filter(tool => this.isToolEnabled(tool.name))) {
+        const enabledTools = this.registeredTools.filter(tool => this.isToolEnabled(tool.name));
+        for (const toolDef of enabledTools) {
             (server.tool as any)(
                 toolDef.name,
                 toolDef.description,
@@ -85,7 +92,7 @@ export class McpService {
         }
 
         this.sessionServers[sessionId] = server;
-        this.logger.debug(`[Session ${sessionId}] Created new McpServer with ${this.registeredTools.length} tools`);
+        this.logger.debug(`[Session ${sessionId}] Created new McpServer with ${enabledTools.length} tools`);
         return server;
     }
 
@@ -154,6 +161,11 @@ export class McpService {
 
         // Parse JSON for all routes
         this.app.use(express.json());
+        this.app.use((req, res, next) => {
+            if (this.checkHost(req, res)) {
+                next();
+            }
+        });
 
         // Health check endpoint
         this.app.get('/health', (_, res) => {
@@ -161,9 +173,29 @@ export class McpService {
                 status: 'ok',
                 server: 'Tabby MCP',
                 version: PLUGIN_VERSION,
+                instanceId: this.instanceId,
                 transport: 'StreamableHTTP + SSE',
                 uptime: process.uptime()
             });
+        });
+
+        // Internal loopback-only handover endpoint. A newly launched Tabby window
+        // uses the persisted token to ask a stale previous plugin instance to
+        // release the configured port (Issue #5). This is intentionally not
+        // documented as a public API.
+        this.app.post('/internal/shutdown', (req: Request, res: Response) => {
+            const suppliedToken = req.headers['x-tabby-mcp-control-token'];
+            if (!this.isLoopbackRequest(req) || !this.controlToken || suppliedToken !== this.controlToken) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+
+            res.status(202).json({ message: 'Shutdown accepted', instanceId: this.instanceId });
+            setTimeout(() => {
+                void this.stopServerInternal(true, 'stale instance handover').catch(error => {
+                    this.logger.error('Stale instance handover shutdown failed:', error);
+                });
+            }, 50);
         });
 
         // Server info endpoint
@@ -203,79 +235,69 @@ export class McpService {
 
         this.app.all('/mcp', async (req: Request, res: Response) => {
             // Validate Origin header for security (DNS rebinding protection)
-            const origin = req.headers.origin;
-            const host = req.headers.host;
-            if (origin && !this.isValidOrigin(origin, host)) {
-                this.logger.warn(`Rejected request with invalid origin: ${origin}`);
-                res.status(403).json({ error: 'Invalid origin' });
+            if (!this.checkOrigin(req, res)) {
                 return;
             }
 
-            // Handle GET request - establish SSE stream for server-to-client messages
-            if (req.method === 'GET') {
-                this.logger.info('Streamable HTTP: GET /mcp - Establishing SSE stream');
-
-                // Check for existing session
-                const sessionId = req.headers['mcp-session-id'] as string;
-                if (sessionId && this.streamableTransports[sessionId]) {
-                    // Reuse existing transport
-                    const transport = this.streamableTransports[sessionId];
-                    res.setHeader('Content-Type', 'text/event-stream');
-                    res.setHeader('Cache-Control', 'no-cache');
-                    res.setHeader('Connection', 'keep-alive');
-                    res.setHeader('mcp-session-id', sessionId);
-
-                    // Keep connection alive
-                    const heartbeat = setInterval(() => {
-                        if (!res.writableEnded) {
-                            res.write(': heartbeat\n\n');
-                        }
-                    }, 15000);
-
-                    res.on('close', () => {
-                        clearInterval(heartbeat);
-                        this.logger.info(`Streamable HTTP: SSE stream closed for session: ${sessionId}`);
-                        // Note: Don't delete transport here - it may still be used for POST requests
-                        // The transport.onclose handler will clean up when fully disconnected
+            // GET and DELETE must be handled by the SDK so Accept, protocol version,
+            // session validation, single-stream enforcement, and SSE routing all apply.
+            if (req.method === 'GET' || req.method === 'DELETE') {
+                const sessionId = req.headers['mcp-session-id'] as string | undefined;
+                const transport = sessionId ? this.streamableTransports[sessionId] : undefined;
+                if (!transport) {
+                    res.status(sessionId ? 404 : 400).json({
+                        jsonrpc: '2.0',
+                        error: {
+                            code: sessionId ? -32001 : -32000,
+                            message: sessionId ? 'Session not found' : 'Mcp-Session-Id header is required'
+                        },
+                        id: null
                     });
                     return;
                 }
 
-                // No session - return info about how to connect
-                res.status(400).json({
-                    error: 'Session required',
-                    message: 'Send a POST request with initialize message first to establish session'
-                });
-                return;
-            }
-
-            // Handle DELETE request - close session
-            if (req.method === 'DELETE') {
-                const sessionId = req.headers['mcp-session-id'] as string;
-                if (sessionId && this.streamableTransports[sessionId]) {
-                    try {
-                        await this.streamableTransports[sessionId].close();
-                    } catch (e) {
-                        // Ignore close errors
+                try {
+                    await transport.handleRequest(req, res);
+                } catch (error: any) {
+                    this.logger.error(`Streamable HTTP: ${req.method} request failed:`, error);
+                    if (!res.headersSent) {
+                        res.status(500).json({
+                            jsonrpc: '2.0',
+                            error: { code: -32603, message: error.message || 'Internal error' },
+                            id: null
+                        });
                     }
-                    delete this.streamableTransports[sessionId];
-                    this.logger.info(`Streamable HTTP: Session closed: ${sessionId}`);
-                    res.status(200).json({ message: 'Session closed' });
-                } else {
-                    res.status(404).json({ error: 'Session not found' });
                 }
                 return;
             }
 
             // Handle POST request - main message handling
             if (req.method === 'POST') {
-                const sessionId = req.headers['mcp-session-id'] as string || randomUUID();
-                const acceptHeader = req.headers.accept || '';
+                const clientSessionId = req.headers['mcp-session-id'] as string | undefined;
+                const initializeRequest = this.isInitializeRequest(req.body);
+                let transport = clientSessionId ? this.streamableTransports[clientSessionId] : undefined;
 
+                if (!transport && clientSessionId) {
+                    res.status(404).json({
+                        jsonrpc: '2.0',
+                        error: { code: -32001, message: `Session not found: ${clientSessionId}` },
+                        id: req.body?.id ?? null
+                    });
+                    return;
+                }
+                if (!transport && !initializeRequest) {
+                    res.status(400).json({
+                        jsonrpc: '2.0',
+                        error: { code: -32000, message: 'Initialize the session before sending MCP messages' },
+                        id: req.body?.id ?? null
+                    });
+                    return;
+                }
+
+                const sessionId = clientSessionId || randomUUID();
+                let createdTransport = false;
                 this.logger.debug(`Streamable HTTP: POST /mcp sessionId=${sessionId}`);
 
-                // Check if we need to create new transport
-                let transport = this.streamableTransports[sessionId];
                 if (!transport) {
                     // Create new Streamable HTTP transport
                     transport = new StreamableHTTPServerTransport({
@@ -295,16 +317,26 @@ export class McpService {
 
                     this.streamableTransports[sessionId] = transport;
                     this.initSessionMetadata(sessionId, 'streamable', req);
+                    createdTransport = true;
 
-                    // Create per-session McpServer and connect to transport
                     const server = this.createServerForSession(sessionId);
-                    await server.connect(transport);
+                    try {
+                        await server.connect(transport);
+                    } catch (error: any) {
+                        delete this.streamableTransports[sessionId];
+                        this.sessionMetadata.delete(sessionId);
+                        this.cleanupServerForSession(sessionId);
+                        this.logger.error('Streamable HTTP: Failed to create session:', error);
+                        res.status(500).json({
+                            jsonrpc: '2.0',
+                            error: { code: -32603, message: error.message || 'Failed to create session' },
+                            id: req.body?.id ?? null
+                        });
+                        return;
+                    }
 
                     this.logger.info(`Streamable HTTP: New session created: ${sessionId}`);
                 }
-
-                // Set session ID header in response
-                res.setHeader('mcp-session-id', sessionId);
 
                 // Track activity
                 if (req.body?.method) {
@@ -318,13 +350,19 @@ export class McpService {
                 // Handle the message
                 try {
                     await transport.handleRequest(req, res, req.body);
+                    if (createdTransport && !transport.sessionId) {
+                        await transport.close();
+                    }
                 } catch (error: any) {
+                    if (createdTransport) {
+                        await transport.close().catch(() => undefined);
+                    }
                     this.logger.error('Streamable HTTP: Error handling request:', error);
                     if (!res.headersSent) {
                         res.status(500).json({
                             jsonrpc: '2.0',
                             error: { code: -32603, message: error.message || 'Internal error' },
-                            id: req.body?.id || null
+                            id: req.body?.id ?? null
                         });
                     }
                 }
@@ -343,6 +381,10 @@ export class McpService {
 
         // SSE endpoint for legacy MCP clients
         this.app.get('/sse', async (req: Request, res: Response) => {
+            // Same DNS-rebinding protection as /mcp (previously only /mcp was guarded)
+            if (!this.checkOrigin(req, res)) {
+                return;
+            }
             this.logger.info('Legacy SSE: Establishing connection');
 
             // Set headers for SSE
@@ -410,6 +452,10 @@ export class McpService {
 
         // Messages endpoint for legacy SSE transport
         this.app.post('/messages', async (req: Request, res: Response) => {
+            if (!this.checkOrigin(req, res)) {
+                return;
+            }
+
             const sessionId = req.query.sessionId as string;
 
             if (!sessionId) {
@@ -433,42 +479,78 @@ export class McpService {
             }
 
             this.logger.debug(`Legacy SSE: Message received for sessionId=${sessionId}`);
-            await transport.handlePostMessage(req, res);
+            // CRITICAL: pass req.body as parsedBody. express.json() has already
+            // consumed the request stream, so without this the SDK would try to
+            // re-read an exhausted stream and fail with an empty body.
+            await transport.handlePostMessage(req, res, req.body);
         });
 
     }
 
     /**
-     * Validate origin header for security
+     * Shared Origin validation for all MCP endpoints (DNS rebinding protection).
+     * Requests without an Origin header (curl, local CLI bridges) are allowed.
+     * Returns false if the response has already been rejected.
      */
-    private isValidOrigin(origin: string, host: string | undefined): boolean {
-        // Allow requests from localhost
-        const localhostPatterns = [
-            'http://localhost',
-            'http://127.0.0.1',
-            'https://localhost',
-            'https://127.0.0.1'
-        ];
+    private checkOrigin(req: Request, res: Response): boolean {
+        const origin = req.headers.origin;
+        if (origin && !this.isValidOrigin(origin, req.socket.localPort)) {
+            this.logger.warn(`Rejected request with invalid origin: ${origin}`);
+            res.status(403).json({ error: 'Invalid origin' });
+            return false;
+        }
+        return true;
+    }
 
-        for (const pattern of localhostPatterns) {
-            if (origin.startsWith(pattern)) {
+    /**
+     * Host header validation. The server listens on IPv4 loopback only, so any
+     * other hostname (or a mismatched port) indicates a rebinding attempt.
+     */
+    private checkHost(req: Request, res: Response): boolean {
+        const host = req.headers.host;
+        try {
+            const parsed = new URL(`http://${host || ''}`);
+            const validHostname = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+            const validPort = parsed.port === String(req.socket.localPort || this.config.store.mcp?.port || 3001);
+            if (validHostname && validPort) {
                 return true;
             }
+        } catch {
+            // Reject malformed Host headers below.
         }
 
-        // Allow if origin matches host
-        if (host) {
-            try {
-                const originHost = new URL(origin).host;
-                if (originHost === host) {
-                    return true;
-                }
-            } catch {
-                // Invalid URL
-            }
-        }
-
+        this.logger.warn(`Rejected request with invalid Host header: ${host || '(missing)'}`);
+        res.status(403).json({ error: 'Invalid host' });
         return false;
+    }
+
+    /** True only for connections originating from this machine's loopback stack */
+    private isLoopbackRequest(req: Request): boolean {
+        const address = req.socket.remoteAddress;
+        return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+    }
+
+    /**
+     * Validate origin header for security
+     */
+    private isValidOrigin(origin: string, localPort: number | undefined): boolean {
+        try {
+            const url = new URL(origin);
+            const validProtocol = url.protocol === 'http:' || url.protocol === 'https:';
+            const validHostname = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+            const validPort = url.port === String(localPort || this.config.store.mcp?.port || 3001);
+            return validProtocol && validHostname && validPort;
+        } catch {
+            return false;
+        }
+    }
+
+    /** JSON-RPC initialize detection (single message or batch) */
+    private isInitializeRequest(body: any): boolean {
+        if (Array.isArray(body)) {
+            return body.some(msg => msg?.method === 'initialize');
+        }
+        return body?.method === 'initialize';
     }
 
     /**
@@ -482,6 +564,16 @@ export class McpService {
         this.toolCategories.forEach(category => {
             category.mcpTools.forEach(tool => {
                 this.app.post(`/api/tool/${tool.name}`, async (req: Request, res: Response) => {
+                    if (!this.checkOrigin(req, res)) {
+                        return;
+                    }
+                    if (this.config.store.mcp?.directToolApi?.enabled !== true) {
+                        res.status(404).json({
+                            error: 'Direct tool API is disabled',
+                            hint: 'Use the MCP /mcp endpoint instead.'
+                        });
+                        return;
+                    }
                     if (!this.isToolEnabled(tool.name)) {
                         res.status(404).json({
                             error: `Tool not available: ${tool.name}`,
@@ -505,55 +597,223 @@ export class McpService {
     }
 
     /**
-     * Start the MCP server
+     * Start the MCP server.
+     *
+     * Issue #5: after an unclean Tabby shutdown, the previous process (or the OS
+     * TIME_WAIT state / the renderer reusing the port) can still hold the port
+     * when the plugin boots again. Instead of failing permanently on the first
+     * EADDRINUSE, retry with backoff - the port is usually released within a
+     * few seconds. The server also binds to 127.0.0.1 only, so it never
+     * competes for (or exposes itself on) non-loopback interfaces.
      */
-    public async startServer(port?: number): Promise<void> {
+    public startServer(port?: number): Promise<void> {
         if (this.isRunning) {
             this.logger.warn('MCP server is already running');
+            return Promise.resolve();
+        }
+        if (this.startPromise) {
+            return this.startPromise;
+        }
+
+        const generation = ++this.lifecycleGeneration;
+        const pending = this.startServerInternal(port, generation);
+        this.startPromise = pending;
+        void pending.then(
+            () => {
+                if (this.startPromise === pending) this.startPromise = undefined;
+            },
+            () => {
+                if (this.startPromise === pending) this.startPromise = undefined;
+            }
+        );
+        return pending;
+    }
+
+    private async startServerInternal(port: number | undefined, generation: number): Promise<void> {
+        const serverPort = port || this.config.store.mcp?.port || 3001;
+        this.assertStartActive(generation);
+        await this.ensureControlToken();
+        this.assertStartActive(generation);
+
+        // Must run after tool categories have been registered by McpModule.
+        this.configureToolEndpoints();
+
+        const maxAttempts = 5;
+        const retryDelayMs = 1500;
+        let lastError: any;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            this.assertStartActive(generation);
+            try {
+                await this.listenOnce(serverPort, generation);
+                return;
+            } catch (err: any) {
+                lastError = err;
+                this.assertStartActive(generation);
+                if (err?.code !== 'EADDRINUSE') {
+                    this.logger.error('Server error:', err);
+                    throw err;
+                }
+
+                const stale = await this.isStaleMcpInstance(serverPort);
+                this.assertStartActive(generation);
+                if (stale) {
+                    this.logger.warn(`Port ${serverPort} is used by another Tabby MCP server instance. Requesting graceful handover (${attempt}/${maxAttempts})...`);
+                    await this.requestStaleInstanceShutdown(serverPort);
+                } else {
+                    this.logger.warn(`Port ${serverPort} is in use by another process; retrying (${attempt}/${maxAttempts})...`);
+                }
+
+                if (attempt < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+                }
+            }
+        }
+
+        this.assertStartActive(generation);
+        this.logger.error(`Port ${serverPort} is still in use after ${maxAttempts} attempts. Change the port in Settings → MCP, or free the port and restart the server.`);
+        throw lastError;
+    }
+
+    /** A stop request bumps the generation so a pending start aborts instead of binding */
+    private assertStartActive(generation: number): void {
+        if (generation !== this.lifecycleGeneration) {
+            const error: any = new Error('MCP server start cancelled');
+            error.code = 'ECANCELED';
+            throw error;
+        }
+    }
+
+    /**
+     * Persist a per-install control token used only for loopback stale-instance
+     * handover. Existing installations get one lazily on first server start.
+     */
+    private async ensureControlToken(): Promise<void> {
+        const existing = this.config.store.mcp?.serverControlToken;
+        if (typeof existing === 'string' && existing.length >= 32) {
+            this.controlToken = existing;
             return;
         }
 
-        const serverPort = port || this.config.store.mcp?.port || 3001;
+        this.controlToken = randomUUID() + randomUUID();
+        this.config.store.mcp.serverControlToken = this.controlToken;
+        try {
+            await this.config.save();
+        } catch (error) {
+            // Keep the in-memory token so this instance still functions. Handover
+            // will become available after a later successful config save.
+            this.logger.warn('Could not persist MCP control token:', error);
+        }
+    }
 
-        // Configure API endpoints for direct tool access
-        // Must be called here (not in configureExpress) because tools are registered
-        // by McpModule constructor AFTER McpService constructor runs (Issue #4)
-        this.configureToolEndpoints();
-
+    /** Single bind attempt on the loopback interface */
+    private listenOnce(serverPort: number, generation: number): Promise<void> {
         return new Promise((resolve, reject) => {
-            try {
-                this.httpServer = http.createServer(this.app);
+            const server = http.createServer(this.app);
+            let settled = false;
 
-                this.httpServer.listen(serverPort, () => {
-                    this.isRunning = true;
-                    this.logger.info(`MCP server started on port ${serverPort}`);
-                    this.logger.info(`  Streamable HTTP: http://localhost:${serverPort}/mcp`);
-                    this.logger.info(`  Legacy SSE: http://localhost:${serverPort}/sse`);
-                    resolve();
+            server.on('connection', (socket: Socket) => {
+                this.sockets.add(socket);
+                socket.on('close', () => {
+                    this.sockets.delete(socket);
                 });
+            });
 
-                // Track active connections for graceful shutdown
-                this.httpServer.on('connection', (socket: Socket) => {
-                    this.sockets.add(socket);
-                    socket.on('close', () => {
-                        this.sockets.delete(socket);
-                    });
-                });
-
-                this.httpServer.on('error', (err: any) => {
-                    this.isRunning = false;
-                    if (err.code === 'EADDRINUSE') {
-                        this.logger.error(`Port ${serverPort} is already in use`);
-                    } else {
-                        this.logger.error('Server error:', err);
-                    }
-                    reject(err);
-                });
-            } catch (err) {
-                this.logger.error('Failed to start MCP server:', err);
+            server.on('error', (err: any) => {
+                if (settled) {
+                    this.logger.error('Server error:', err);
+                    return;
+                }
+                settled = true;
                 this.isRunning = false;
+                try {
+                    server.close();
+                } catch {
+                    // Nothing to clean up
+                }
                 reject(err);
-            }
+            });
+
+            // Bind to loopback only: MCP has no authentication, so it must not be
+            // reachable from other machines on the network
+            server.listen(serverPort, '127.0.0.1', () => {
+                if (generation !== this.lifecycleGeneration) {
+                    settled = true;
+                    server.close();
+                    const error: any = new Error('MCP server start cancelled');
+                    error.code = 'ECANCELED';
+                    reject(error);
+                    return;
+                }
+
+                settled = true;
+                this.httpServer = server;
+                this.isRunning = true;
+                this.logger.info(`MCP server started on 127.0.0.1:${serverPort}`);
+                this.logger.info(`  Streamable HTTP: http://127.0.0.1:${serverPort}/mcp`);
+                this.logger.info(`  Legacy SSE: http://127.0.0.1:${serverPort}/sse`);
+                resolve();
+            });
+        });
+    }
+
+    /**
+     * Probe /health to determine whether the port is held by a previous
+     * Tabby MCP instance (which will release it soon) or a foreign process.
+     */
+    private async isStaleMcpInstance(serverPort: number): Promise<boolean> {
+        return new Promise((resolve) => {
+            const req = http.get({
+                host: '127.0.0.1',
+                port: serverPort,
+                path: '/health',
+                timeout: 1000
+            }, (res) => {
+                let body = '';
+                res.on('data', chunk => { body += chunk; });
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(body)?.server === 'Tabby MCP');
+                    } catch {
+                        resolve(false);
+                    }
+                });
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+            });
+        });
+    }
+
+    /** Ask a previous v1.6.3+ instance to release the port */
+    private async requestStaleInstanceShutdown(serverPort: number): Promise<boolean> {
+        if (!this.controlToken) {
+            return false;
+        }
+
+        return new Promise((resolve) => {
+            const req = http.request({
+                host: '127.0.0.1',
+                port: serverPort,
+                path: '/internal/shutdown',
+                method: 'POST',
+                timeout: 1000,
+                headers: {
+                    'X-Tabby-MCP-Control-Token': this.controlToken,
+                    'Content-Length': '0'
+                }
+            }, (res) => {
+                res.resume();
+                res.on('end', () => resolve(res.statusCode === 202));
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+            });
+            req.end();
         });
     }
 
@@ -573,6 +833,17 @@ export class McpService {
     }
 
     private async stopServerInternal(forceImmediate: boolean, reason: string): Promise<void> {
+        // Cancel any in-flight start so a pending retry loop cannot bind the port
+        // after this stop completes.
+        ++this.lifecycleGeneration;
+        const pendingStart = this.startPromise;
+        if (!this.isRunning && pendingStart) {
+            try {
+                await pendingStart;
+            } catch {
+                // A stop request intentionally cancels an in-flight start.
+            }
+        }
         if (!this.isRunning) {
             this.logger.info('MCP server is not running');
             return;
@@ -732,6 +1003,9 @@ export class McpService {
         }
 
         this.sessionMetadata.delete(sessionId);
+        // Release the per-session McpServer as well - for legacy transports the
+        // SSE 'close' event may not fire here, which previously leaked the server
+        this.cleanupServerForSession(sessionId);
         return found;
     }
 }

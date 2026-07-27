@@ -52,6 +52,7 @@ export interface ActiveCommand {
 
 /**
  * MCP Configuration
+ * Mirrors the defaults defined in McpConfigProvider (config.store.mcp)
  */
 export interface McpConfig {
     port: number;
@@ -62,9 +63,43 @@ export interface McpConfig {
     pairProgrammingMode: {
         enabled: boolean;
         showConfirmationDialog: boolean;
+        // Gate sensitive SFTP operations; send_input follows showConfirmationDialog
+        confirmFileOperations: boolean;
         autoFocusTerminal: boolean;
     };
-    useStreamCapture?: boolean; // New experimental mode to fix output truncation
+    timing: {
+        pollInterval: number;
+        initialDelay: number;
+        sessionStableChecks: number;
+        sessionPollInterval: number;
+    };
+    sessionTracking: {
+        useStableIds: boolean;
+        includeProfileInfo: boolean;
+        includePid: boolean;
+        includeCwd: boolean;
+    };
+    backgroundExecution: {
+        enabled: boolean;
+    };
+    directToolApi: {
+        enabled: boolean;
+    };
+    sftp: {
+        enabled: boolean;
+        maxFileSize: number;
+        maxUploadSize: number;
+        maxDownloadSize: number;
+        timeout: number;
+    };
+    environmentDetection: {
+        enabled: boolean;
+        useEnhancedHeuristics: boolean;
+        mode: 'heuristic' | 'active';
+    };
+    useStreamCapture?: boolean; // Experimental mode to fix output truncation
+    /** Internal loopback handover secret; generated lazily and never exposed by MCP endpoints */
+    serverControlToken?: string;
 }
 
 /**

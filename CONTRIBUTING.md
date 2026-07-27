@@ -21,6 +21,14 @@ Thank you for your interest in contributing to Tabby-MCP! 🎉
 
 ## 🔧 Development
 
+### Quality Checks
+
+```bash
+npm run check
+```
+
+`npm run check` runs TypeScript validation, smoke regression checks, and the production bundle. Run it before opening a pull request.
+
 ### Building
 
 ```bash
@@ -77,10 +85,11 @@ private createMyNewTool(): McpTool {
 
 ## 📋 Pull Request Process
 
-1. Update the README if you add new features
-2. Add yourself to the contributors list
-3. Ensure the build passes
-4. Create a Pull Request with a clear description
+1. Update `README.md`, `README_CN.md`, and `CHANGELOG.md` if you add new features or change behavior
+2. Keep `src/i18n/en-US.json` and `src/i18n/zh-CN.json` key sets identical
+3. Run `npm run check`
+4. Add yourself to the contributors list
+5. Create a Pull Request with a clear description
 
 ## 🐛 Reporting Issues
 

@@ -21,12 +21,11 @@
  */
 
 const http = require('http');
-const https = require('https');
 const readline = require('readline');
 
-// Configuration
+// Configuration - match the server's loopback-only bind
 const DEFAULT_PORT = 3001;
-const DEFAULT_HOST = 'localhost';
+const DEFAULT_HOST = '127.0.0.1';
 
 // Parse command line arguments
 function parseArgs() {
@@ -50,9 +49,12 @@ function parseArgs() {
 const config = parseArgs();
 const baseUrl = `http://${config.host}:${config.port}`;
 
-// Session ID for SSE connection
+// Session state for SSE connection
 let sessionId = null;
 let sseConnection = null;
+let connectingPromise = null;
+let reconnectTimer = null;
+let stopping = false;
 
 // Log to stderr (so it doesn't interfere with STDIO protocol)
 function log(message) {
@@ -103,15 +105,26 @@ function httpRequest(method, path, body = null) {
     });
 }
 
-// Connect to SSE endpoint and handle events
+// Connect to SSE endpoint and handle events. Concurrent callers share one attempt.
 function connectSSE() {
-    return new Promise((resolve, reject) => {
+    if (sessionId && sseConnection && !sseConnection.destroyed) {
+        return Promise.resolve(sessionId);
+    }
+    if (connectingPromise) {
+        return connectingPromise;
+    }
+
+    connectingPromise = new Promise((resolve, reject) => {
         const url = new URL('/sse', baseUrl);
+        let settled = false;
+        let sessionTimeout;
 
         log(`Connecting to SSE: ${url.href}`);
 
         const req = http.get(url.href, (res) => {
             if (res.statusCode !== 200) {
+                res.resume();
+                settled = true;
                 reject(new Error(`SSE connection failed: ${res.statusCode}`));
                 return;
             }
@@ -119,28 +132,42 @@ function connectSSE() {
             sseConnection = res;
             let buffer = '';
 
+            sessionTimeout = setTimeout(() => {
+                if (!settled) {
+                    settled = true;
+                    req.destroy();
+                    reject(new Error('Timed out waiting for SSE session ID'));
+                }
+            }, 5000);
+
             res.on('data', (chunk) => {
                 buffer += chunk.toString();
 
-                // Process complete SSE events
+                // Process complete SSE lines. The endpoint event contains the
+                // /messages URL and subsequent message events contain JSON-RPC.
                 const lines = buffer.split('\n');
-                buffer = lines.pop() || ''; // Keep incomplete line in buffer
+                buffer = lines.pop() || '';
 
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
+                        const payload = line.slice(6);
                         try {
-                            const data = JSON.parse(line.slice(6));
-                            handleSSEMessage(data);
-                        } catch (e) {
-                            // Ignore parse errors (could be heartbeat)
+                            handleSSEMessage(JSON.parse(payload));
+                        } catch {
+                            // Endpoint events are URLs, heartbeat comments are non-JSON
                         }
-                    } else if (line.includes('sessionId=')) {
-                        // Extract session ID from endpoint event
-                        const match = line.match(/sessionId=([a-zA-Z0-9-]+)/);
+                    }
+
+                    if (line.includes('sessionId=')) {
+                        const match = line.match(/[?&]sessionId=([a-zA-Z0-9-]+)/);
                         if (match) {
                             sessionId = match[1];
                             log(`Session ID: ${sessionId}`);
-                            resolve(sessionId);
+                            if (!settled) {
+                                settled = true;
+                                clearTimeout(sessionTimeout);
+                                resolve(sessionId);
+                            }
                         }
                     }
                 }
@@ -151,24 +178,43 @@ function connectSSE() {
             });
 
             res.on('close', () => {
+                clearTimeout(sessionTimeout);
+                sseConnection = null;
+                sessionId = null;
                 log('SSE connection closed');
-                // Try to reconnect after a delay
-                setTimeout(() => {
-                    connectSSE().catch(err => log(`Reconnect failed: ${err.message}`));
-                }, 5000);
-            });
-
-            // Set a timeout for initial session ID
-            setTimeout(() => {
-                if (!sessionId) {
-                    // Try to extract from first endpoint event
-                    resolve(null);
+                if (!settled) {
+                    settled = true;
+                    reject(new Error('SSE connection closed before session initialization'));
                 }
-            }, 2000);
+                if (!stopping) {
+                    scheduleReconnect();
+                }
+            });
         });
 
-        req.on('error', reject);
+        req.on('error', (error) => {
+            clearTimeout(sessionTimeout);
+            if (!settled) {
+                settled = true;
+                reject(error);
+            }
+        });
+    }).finally(() => {
+        connectingPromise = null;
     });
+
+    return connectingPromise;
+}
+
+function scheduleReconnect() {
+    if (stopping || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectSSE().catch(error => {
+            log(`Reconnect failed: ${error.message}`);
+            scheduleReconnect();
+        });
+    }, 5000);
 }
 
 // Handle incoming SSE message
@@ -180,26 +226,24 @@ function handleSSEMessage(data) {
 // Send message to MCP server via POST
 async function sendToServer(message) {
     if (!sessionId) {
-        log('No session ID, waiting for SSE connection...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!sessionId) {
-            throw new Error('No SSE session established');
-        }
+        log('No session ID, establishing SSE connection...');
+        await connectSSE();
     }
 
     const response = await httpRequest('POST', `/messages?sessionId=${sessionId}`, message);
-    return response;
+    if (response.status < 200 || response.status >= 300) {
+        const detail = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        throw new Error(`MCP server returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+    }
+    // Legacy SSE responses arrive exclusively on the SSE stream. Do not write
+    // the POST acknowledgement body (often "Accepted") to stdout: doing so
+    // corrupts the newline-delimited JSON-RPC protocol and can duplicate replies.
 }
 
 // Handle JSON-RPC request from stdin
 async function handleRequest(request) {
     try {
-        // Forward to MCP server
-        const response = await sendToServer(request);
-
-        if (response.data) {
-            sendResponse(response.data);
-        }
+        await sendToServer(request);
     } catch (error) {
         log(`Error handling request: ${error.message}`);
         sendResponse({
@@ -255,21 +299,20 @@ async function main() {
         }
     });
 
-    rl.on('close', () => {
-        log('STDIO closed, exiting');
+    const shutdown = (reason) => {
+        if (stopping) return;
+        stopping = true;
+        log(`${reason}, exiting`);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (sseConnection) sseConnection.destroy();
         process.exit(0);
-    });
+    };
+
+    rl.on('close', () => shutdown('STDIO closed'));
 
     // Handle termination
-    process.on('SIGINT', () => {
-        log('Received SIGINT, exiting');
-        process.exit(0);
-    });
-
-    process.on('SIGTERM', () => {
-        log('Received SIGTERM, exiting');
-        process.exit(0);
-    });
+    process.on('SIGINT', () => shutdown('Received SIGINT'));
+    process.on('SIGTERM', () => shutdown('Received SIGTERM'));
 }
 
 main().catch(error => {

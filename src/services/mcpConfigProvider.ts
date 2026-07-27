@@ -9,13 +9,14 @@ export class McpConfigProvider extends ConfigProvider {
     defaults = {
         mcp: {
             port: 3001,
-            host: 'http://localhost:3001',
+            host: 'http://127.0.0.1:3001',
             enableLogging: true,
             startOnBoot: true,
             logLevel: 'info',
             pairProgrammingMode: {
                 enabled: true,
                 showConfirmationDialog: true,
+                confirmFileOperations: true, // Require approval for sensitive SFTP operations
                 autoFocusTerminal: true
             },
             // Timing configuration (in milliseconds)
@@ -35,6 +36,10 @@ export class McpConfigProvider extends ConfigProvider {
             // Background execution mode - allows MCP to run commands without focusing the terminal
             backgroundExecution: {
                 enabled: false              // Default: false (focus terminal for visibility/safety)
+            },
+            // Compatibility/debug endpoint: POST /api/tool/:name (disabled by default)
+            directToolApi: {
+                enabled: false
             },
             // SFTP configuration (requires tabby-ssh)
             sftp: {
