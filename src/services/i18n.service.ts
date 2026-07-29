@@ -30,7 +30,7 @@ export class McpI18nService {
 
     private updateLocale(): void {
         // Tabby stores language setting in config.store.language
-        const newLocale = this.config.store.language || defaultLocale;
+        const newLocale = this.config.store?.language || defaultLocale;
         if (newLocale !== this.currentLocale) {
             this.currentLocale = newLocale;
             this.logger.debug(`[i18n] Locale changed to: ${newLocale}`);

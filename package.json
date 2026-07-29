@@ -1,7 +1,7 @@
 {
   "name": "tabby-mcp-server",
   "version": "1.6.3-rc.1",
-  "description": "MCP (Model Context Protocol) server plugin for Tabby terminal - Complete terminal control with 35 MCP tools including SFTP file transfer",
+  "description": "MCP (Model Context Protocol) server plugin for Tabby terminal - Complete terminal control with 36 MCP tools including SFTP file transfer",
   "homepage": "https://github.com/GentlemanHu/Tabby-MCP",
   "repository": {
     "type": "git",

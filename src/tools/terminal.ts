@@ -323,14 +323,20 @@ export class TerminalToolCategory extends BaseToolCategory {
             name: prompt.name ?? '',
             instruction: prompt.instruction ?? '',
             prompts: Array.isArray(prompt.prompts)
-                ? prompt.prompts.map((p: any, index: number) => ({
-                    index,
-                    prompt: p?.prompt ?? '',
-                    echo: p?.echo !== false,
-                    isPassword: typeof prompt.isAPasswordPrompt === 'function'
-                        ? Boolean(prompt.isAPasswordPrompt(index))
-                        : false
-                }))
+                ? prompt.prompts.map((entry: any, index: number) => {
+                    // Current Tabby uses strings; older releases exposed prompt objects.
+                    const text = typeof entry === 'string'
+                        ? entry
+                        : String(entry?.prompt ?? '');
+                    return {
+                        index,
+                        prompt: text,
+                        echo: typeof entry === 'object' && entry !== null
+                            ? entry.echo !== false
+                            : true,
+                        isPassword: /password/i.test(text)
+                    };
+                })
                 : [],
             responseCount: Array.isArray(prompt.responses) ? prompt.responses.length : 0
         };
@@ -690,7 +696,6 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
             schema: z.object({
                 response: z.string().optional().describe('Single response for prompts with one field, such as a 6-digit TOTP code'),
                 responses: z.array(z.string()).optional().describe('Responses for multi-prompt keyboard-interactive auth, in prompt order'),
-                submit: z.boolean().optional().describe('Whether to submit after filling responses (default: true)'),
                 sessionId: z.string().optional().describe('Stable session ID (recommended)'),
                 tabIndex: z.number().optional().describe('Tab index (legacy)'),
                 title: z.string().optional().describe('Match by title'),
@@ -699,13 +704,12 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
             handler: async (params: {
                 response?: string;
                 responses?: string[];
-                submit?: boolean;
                 sessionId?: string;
                 tabIndex?: number;
                 title?: string;
                 profileName?: string;
             }) => {
-                const { response, responses, submit, sessionId, tabIndex, title, profileName } = params;
+                const { response, responses, sessionId, tabIndex, title, profileName } = params;
                 const session = this.findSessionByLocator({ sessionId, tabIndex, title, profileName });
 
                 if (!session) {
@@ -775,19 +779,47 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                     };
                 }
 
+                if (typeof prompt.respond !== 'function') {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: 'Keyboard-interactive prompt does not expose respond()'
+                            })
+                        }]
+                    };
+                }
+
+                const pairMode = this.config.store.mcp?.pairProgrammingMode;
+                if (pairMode?.enabled && pairMode?.showConfirmationDialog) {
+                    const confirmed = await this.dialogService.showOperationConfirmation(
+                        'submit_keyboard_interactive_response',
+                        session.tab.title || `Terminal ${session.tabIndex}`,
+                        `${providedResponses.length} keyboard-interactive response(s)`
+                    );
+                    if (!confirmed) {
+                        return {
+                            content: [{
+                                type: 'text', text: JSON.stringify({
+                                    success: false,
+                                    sessionId: session.sessionId,
+                                    error: 'Keyboard-interactive response rejected by user'
+                                })
+                            }]
+                        };
+                    }
+                }
+
+                const previousResponses = [...prompt.responses];
                 try {
                     providedResponses.forEach((value, index) => {
                         prompt.responses[index] = value;
                     });
 
-                    if (submit !== false) {
-                        if (typeof prompt.respond !== 'function') {
-                            throw new Error('Keyboard-interactive prompt does not expose respond()');
-                        }
-                        prompt.respond();
-                        (session.tab as any).activeKIPrompt = null;
-                        (session.tab as any).frontend?.focus?.();
-                    }
+                    prompt.respond();
+                    (session.tab as any).activeKIPrompt = null;
+                    (session.tab as any).frontend?.focus?.();
 
                     this.logger.info(`Submitted keyboard-interactive response for session ${session.sessionId}`);
                     return {
@@ -795,15 +827,14 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                             type: 'text', text: JSON.stringify({
                                 success: true,
                                 sessionId: session.sessionId,
-                                submitted: submit !== false,
+                                submitted: true,
                                 responseCount: providedResponses.length,
-                                message: submit === false
-                                    ? 'Keyboard-interactive response filled but not submitted'
-                                    : 'Keyboard-interactive response submitted'
+                                message: 'Keyboard-interactive response submitted'
                             })
                         }]
                     };
                 } catch (error: any) {
+                    prompt.responses.splice(0, prompt.responses.length, ...previousResponses);
                     this.logger.error(`Error submitting keyboard-interactive response for session ${session.sessionId}:`, error);
                     return {
                         content: [{

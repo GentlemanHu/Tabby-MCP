@@ -14,7 +14,7 @@
 
 **Tabby 终端的全功能 MCP 服务器插件**
 
-*将 AI 助手连接到您的终端 — 35 个 MCP 工具，包含 SFTP 支持*
+*将 AI 助手连接到您的终端 — 36 个 MCP 工具，包含 SFTP 支持*
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -85,7 +85,7 @@
 </div>
 
 
-> **v1.6.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input` 和敏感 SFTP 操作；两分钟无人处理时自动拒绝。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。网络仅限本机回环地址（`127.0.0.1`），两种 MCP 传输均验证 Origin，直连工具 API 默认关闭。
+> **v1.6.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。网络仅限本机回环地址（`127.0.0.1`），两种 MCP 传输均验证 Origin，直连工具 API 默认关闭。
 
 ---
 
@@ -199,13 +199,14 @@ npm run build
 
 ## 🛠️ 可用工具
 
-### 终端控制（8 个）
+### 终端控制（9 个）
 
 | 工具 | 说明 |
 |------|------|
 | `get_session_list` | 列出所有终端会话（**包含稳定 UUID**） |
 | `exec_command` | 执行命令（支持多种定位方式） |
 | `send_input` | 发送交互式输入 (Ctrl+C 等) |
+| `submit_keyboard_interactive_response` | 提交 MFA、密码或其他 SSH 键盘交互式认证响应 |
 | `get_terminal_buffer` | 读取终端缓冲区（默认使用活跃会话） |
 | `abort_command` | 中止正在运行的命令 |
 | `get_command_status` | 监控活动命令状态 |
@@ -359,7 +360,8 @@ npm run build
 - 修复 [Issue #5](https://github.com/GentlemanHu/Tabby-MCP/issues/5)：仅监听回环地址、启动退避重试、旧实例识别，以及同一安装实例间经过认证的端口交接。
 - 修复 SDK 1.25.2 下 Legacy SSE JSON 请求体处理、会话清理、失效 Streamable HTTP 会话、Origin 校验、fish 主动环境探测、SFTP 定位器一致性及 STDIO 重连/消息帧问题。
 - 固定 `@modelcontextprotocol/sdk` 为 1.25.2，提交 `package-lock.json`，并新增类型检查、冒烟测试和构建质量门禁。
-- 工具数量文档已校正为 35 个（通常可见 34 个；`get_session_environment` 为可选工具且默认关闭）。
+- 新增 `submit_keyboard_interactive_response`，用于处理 MFA/TOTP 等 SSH 键盘交互式认证；结对编程确认只显示响应数量，不显示认证值。
+- 工具数量文档已校正为 36 个（通常可见 35 个；`get_session_environment` 为可选工具且默认关闭）。
 
 完整版本历史请查看 [CHANGELOG.md](CHANGELOG.md)。
 

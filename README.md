@@ -14,7 +14,7 @@
 
 **A Comprehensive MCP Server Plugin for Tabby Terminal**
 
-*Connect AI assistants to your terminal with full control — 35 MCP tools including SFTP support*
+*Connect AI assistants to your terminal with full control — 36 MCP tools including SFTP support*
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -85,7 +85,7 @@
 </div>
 
 
-> **Safety model (v1.6.3):** Pair Programming Mode gates `exec_command`, `send_input`, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. Network access is restricted to loopback (`127.0.0.1`), Origin validation is applied to both MCP transports, and the direct tool API is disabled by default.
+> **Safety model (v1.6.3):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. Network access is restricted to loopback (`127.0.0.1`), Origin validation is applied to both MCP transports, and the direct tool API is disabled by default.
 
 ---
 
@@ -237,13 +237,14 @@ For clients that don't support SSE, use the STDIO bridge:
 
 ## 🛠️ Available Tools
 
-### Terminal Control (8)
+### Terminal Control (9)
 
 | Tool | Description |
 |------|-------------|
 | `get_session_list` | List all terminal sessions with **stable UUIDs** and metadata |
 | `exec_command` | Execute command with flexible session targeting |
 | `send_input` | Send interactive input (Ctrl+C, etc) |
+| `submit_keyboard_interactive_response` | Submit MFA, password, or other SSH keyboard-interactive responses |
 | `get_terminal_buffer` | Read terminal buffer (defaults to active session) |
 | `abort_command` | Abort running command |
 | `get_command_status` | Monitor active commands |
@@ -397,7 +398,8 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 - Fixed [Issue #5](https://github.com/GentlemanHu/Tabby-MCP/issues/5): loopback-only bind, startup retry, stale-instance detection, and authenticated same-install port handover.
 - Fixed Legacy SSE JSON body handling for SDK 1.25.2, session cleanup, stale Streamable HTTP session handling, Origin validation, fish active environment probes, SFTP locator consistency, and STDIO reconnect/framing behavior.
 - Pinned `@modelcontextprotocol/sdk` to 1.25.2, committed `package-lock.json`, and added typecheck/smoke/build quality gates.
-- Tool count is now documented accurately: 35 total (34 normally visible; `get_session_environment` is optional and disabled by default).
+- Added `submit_keyboard_interactive_response` for SSH keyboard-interactive authentication, including MFA/TOTP prompts. Pair Programming confirmation shows only the response count, never credential values.
+- Tool count is now documented accurately: 36 total (35 normally visible; `get_session_environment` is optional and disabled by default).
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete version history.
 

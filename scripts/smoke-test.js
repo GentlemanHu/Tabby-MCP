@@ -15,8 +15,8 @@ function testToolCount() {
         'src/tools/sftp.ts'
     ];
     const counts = files.map(file => (read(file).match(/this\.registerTool\(/g) || []).length);
-    assert.deepEqual(counts, [8, 15, 12], 'Unexpected tool count per category');
-    assert.equal(counts.reduce((sum, count) => sum + count, 0), 35, 'Expected 35 registered MCP tools');
+    assert.deepEqual(counts, [9, 15, 12], 'Unexpected tool count per category');
+    assert.equal(counts.reduce((sum, count) => sum + count, 0), 36, 'Expected 36 registered MCP tools');
 }
 
 function testNoBlockingBrowserDialogs() {
@@ -70,6 +70,25 @@ function testApprovalAndCancellationGuards() {
     const sendInput = terminal.slice(terminal.indexOf("name: 'send_input'"), terminal.indexOf('private parseEnvironmentFromBuffer'));
     assert.equal(sendInput.includes('confirmFileOperations'), false, 'send_input approval must not depend on the SFTP confirmation option');
     assert.match(sendInput, /JSON\.stringify\(processedInput\)/, 'send_input must show the decoded terminal input');
+    const keyboardInteractive = terminal.slice(
+        terminal.indexOf("name: 'submit_keyboard_interactive_response'"),
+        terminal.indexOf('private parseEnvironmentFromBuffer')
+    );
+    assert.match(
+        keyboardInteractive,
+        /showOperationConfirmation\([\s\S]*'submit_keyboard_interactive_response'/,
+        'keyboard-interactive authentication must require Pair Programming confirmation'
+    );
+    assert.match(
+        keyboardInteractive,
+        /`\$\{providedResponses\.length\} keyboard-interactive response\(s\)`/,
+        'keyboard-interactive confirmation must show only the response count'
+    );
+    assert.equal(
+        keyboardInteractive.includes('submit:'),
+        false,
+        'keyboard-interactive responses must not remain staged without submission'
+    );
     assert.equal(/else; printf 'shell'; end; end/.test(terminal), false, 'fish probe must close its if chain exactly once');
 
     const sftp = read('src/tools/sftp.ts');
@@ -91,6 +110,13 @@ function testTranslations() {
         assert.ok(en[key], `Missing English translation: ${key}`);
         assert.ok(zh[key], `Missing Chinese translation: ${key}`);
     }
+
+    const i18nService = read('src/services/i18n.service.ts');
+    assert.match(
+        i18nService,
+        /config\.store\?\.language/,
+        'i18n initialization must tolerate ConfigService.store not being ready yet'
+    );
 }
 
 function testPinnedSdkAndLockfile() {
