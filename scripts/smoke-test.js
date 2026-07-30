@@ -67,7 +67,10 @@ function testApprovalAndCancellationGuards() {
     assert.equal(dialog.includes('preview.slice(0, 2000)'), false, 'Approval previews must not hide payload suffixes');
 
     const terminal = read('src/tools/terminal.ts');
-    const sendInput = terminal.slice(terminal.indexOf("name: 'send_input'"), terminal.indexOf('private parseEnvironmentFromBuffer'));
+    const sendInput = terminal.slice(
+        terminal.indexOf("name: 'send_input'"),
+        terminal.indexOf("name: 'submit_keyboard_interactive_response'")
+    );
     assert.equal(sendInput.includes('confirmFileOperations'), false, 'send_input approval must not depend on the SFTP confirmation option');
     assert.match(sendInput, /JSON\.stringify\(processedInput\)/, 'send_input must show the decoded terminal input');
     const keyboardInteractive = terminal.slice(

@@ -4,11 +4,15 @@ All notable changes to Tabby-MCP will be documented in this file.
 
 ## [1.6.3-rc.1] - 2026-07-27
 
-> ⚠️ **Prerelease.** Published to GitHub only, not to npm. Verified by typecheck, smoke regression checks, and a production build; **not verified by a manual run inside a real Tabby/Electron session**. Dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover still need hands-on testing before a stable 1.6.3.
+> ⚠️ **Prerelease.** Published to GitHub only, not to npm. Everything here passes typecheck, smoke regression checks, and a production build.
+>
+> **Exercised in a real Tabby session:** keyboard-interactive authentication end to end — MFA submission through to the Jumpserver asset menu, on Tabby 1.0.229 and 1.0.235 for macOS.
+>
+> **Not yet exercised in a real Tabby session:** dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover. These still need hands-on testing before a stable 1.6.3.
 
 ### ✨ Added
 - **SSH keyboard-interactive authentication**: added `submit_keyboard_interactive_response` for MFA/TOTP and password prompts rendered by Tabby's authentication panel rather than the terminal PTY. Prompt metadata supports both current string prompts and object-shaped prompts from older Tabby releases.
-- **Live Jumpserver validation**: verified end-to-end MFA submission and successful arrival at the Jumpserver asset menu on Tabby 1.0.229 and 1.0.235 for macOS.
+- **Authentication state in `get_session_list`**: sessions now report `sshConnected`, `keyboardInteractivePending`, and non-secret prompt metadata so a client can tell that a session is waiting on MFA.
 
 ### 🔒 Security
 - **Pair Programming approval coverage** (Issue #9): `send_input` now always follows command-confirmation settings after escape decoding; sensitive SFTP operations are independently controlled by the SFTP confirmation setting.

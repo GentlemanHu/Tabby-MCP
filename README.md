@@ -391,7 +391,7 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ### v1.6.3-rc.1 (2026-07-27) — prerelease
 
-> ⚠️ **Prerelease, not yet published to npm.** These fixes are verified by static analysis, a typecheck, smoke regression checks, and a production build — but **not by a manual run inside a real Tabby/Electron session**. Dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover in particular still need hands-on testing. Install it from the [GitHub prerelease](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.1) and please report anything that misbehaves on the referenced issues.
+> ⚠️ **Prerelease, not yet published to npm.** Everything here passes static analysis, a typecheck, smoke regression checks, and a production build. Keyboard-interactive authentication was additionally exercised end to end in a real Tabby session (MFA submission through to the Jumpserver asset menu, on Tabby 1.0.229 and 1.0.235 for macOS). The remaining fixes — dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover — have **not** been exercised by hand yet and still need testing. Install it from the [GitHub prerelease](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.1) and please report anything that misbehaves on the referenced issues.
 
 - Fixed [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9): Pair Programming approval now covers `send_input` and sensitive SFTP operations; transfer cancellation now stops the underlying transfer.
 - Fixed [Issue #7](https://github.com/GentlemanHu/Tabby-MCP/issues/7): replaced blocking browser dialogs with a non-blocking focus-restoring dialog and made command focus honor the Auto-focus setting.
