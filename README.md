@@ -389,17 +389,24 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
-### v1.6.3-rc.1 (2026-07-27) — prerelease
+### v1.6.3-rc.2 (2026-07-29) — prerelease
 
-> ⚠️ **Prerelease, not yet published to npm.** Everything here passes static analysis, a typecheck, smoke regression checks, and a production build. Keyboard-interactive authentication was additionally exercised end to end in a real Tabby session (MFA submission through to the Jumpserver asset menu, on Tabby 1.0.229 and 1.0.235 for macOS). The remaining fixes — dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover — have **not** been exercised by hand yet and still need testing. Install it from the [GitHub prerelease](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.1) and please report anything that misbehaves on the referenced issues.
+> ⚠️ **Prerelease, not yet published to npm.** Install it from the [GitHub prerelease](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.2) and please report anything that misbehaves on the referenced issues.
+>
+> Keyboard-interactive authentication has been exercised end to end in a real Tabby session — MFA submission through to the Jumpserver asset menu, on Tabby 1.0.229 and 1.0.235 for macOS. The rc.1 fixes below — dialog focus restoration, live SFTP transfer cancellation, and multi-instance port handover — have **not** been exercised by hand yet and still need testing.
+
+- Added `submit_keyboard_interactive_response` for SSH keyboard-interactive authentication, including MFA/TOTP prompts ([PR #8](https://github.com/GentlemanHu/Tabby-MCP/pull/8), thanks [@plane636](https://github.com/plane636)). `send_input` writes to the terminal PTY and cannot reach Tabby's authentication panel. Pair Programming confirmation shows only the response count, never credential values.
+- `get_session_list` now reports `sshConnected`, `keyboardInteractivePending`, and non-secret prompt metadata.
+- Fixed a startup crash on Tabby 1.0.235 where `ConfigService.store` was not yet available during Angular service construction, which pushed Tabby into third-party-plugin safe mode.
+- Tool count is now documented accurately: 36 total (35 normally visible; `get_session_environment` is optional and disabled by default).
+
+### v1.6.3-rc.1 (2026-07-27) — prerelease
 
 - Fixed [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9): Pair Programming approval now covers `send_input` and sensitive SFTP operations; transfer cancellation now stops the underlying transfer.
 - Fixed [Issue #7](https://github.com/GentlemanHu/Tabby-MCP/issues/7): replaced blocking browser dialogs with a non-blocking focus-restoring dialog and made command focus honor the Auto-focus setting.
 - Fixed [Issue #5](https://github.com/GentlemanHu/Tabby-MCP/issues/5): loopback-only bind, startup retry, stale-instance detection, and authenticated same-install port handover.
 - Fixed Legacy SSE JSON body handling for SDK 1.25.2, session cleanup, stale Streamable HTTP session handling, Origin validation, fish active environment probes, SFTP locator consistency, and STDIO reconnect/framing behavior.
 - Pinned `@modelcontextprotocol/sdk` to 1.25.2, committed `package-lock.json`, and added typecheck/smoke/build quality gates.
-- Added `submit_keyboard_interactive_response` for SSH keyboard-interactive authentication, including MFA/TOTP prompts. Pair Programming confirmation shows only the response count, never credential values.
-- Tool count is now documented accurately: 36 total (35 normally visible; `get_session_environment` is optional and disabled by default).
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete version history.
 
