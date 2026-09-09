@@ -111,6 +111,13 @@ if (Test-Path $TypingsPath) {
     Copy-Item -Path $TypingsPath -Destination $TabbyPluginDir -Recurse -Force
 }
 
+$BridgePath = Join-Path $SourceDir.FullName "scripts\stdio-bridge.js"
+if (Test-Path $BridgePath) {
+    $ScriptsDir = Join-Path $TabbyPluginDir "scripts"
+    New-Item -ItemType Directory -Force -Path $ScriptsDir | Out-Null
+    Copy-Item -Path $BridgePath -Destination $ScriptsDir -Force
+}
+
 # Cleanup
 Remove-Item -Recurse -Force $TempDir
 

@@ -85,7 +85,7 @@
 </div>
 
 
-> **v1.6.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。网络仅限本机回环地址（`127.0.0.1`），两种 MCP 传输均验证 Origin，直连工具 API 默认关闭。
+> **v1.7.0 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。网络仅限本机回环地址（`127.0.0.1`），两种 MCP 传输均验证 Origin，直连工具 API 默认关闭。
 
 ---
 
@@ -338,7 +338,7 @@ npm run build
 
 | 特性 | 原项目 | 本项目 |
 |------|--------|--------|
-| MCP 工具 | 4 | **35** |
+| MCP 工具 | 4 | **36** |
 | 标签页管理 | ❌ | ✅ |
 | 配置文件/SSH | ❌ | ✅ |
 | SFTP 支持 | ❌ | ✅ |
@@ -351,24 +351,19 @@ npm run build
 
 ## 📝 更新日志
 
-### v1.6.3-rc.2 (2026-07-29) — 预发布
+### v1.7.0 (2026-09-09)
 
-> ⚠️ **预发布版本，尚未发布到 npm。** 可从 [GitHub 预发布页面](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.6.3-rc.2) 安装，如遇异常请在对应 issue 下反馈。
->
-> 键盘交互式认证已在真实 Tabby 环境中完整跑通（从提交 MFA 到进入 Jumpserver 资产菜单，Tabby 1.0.229 与 1.0.235 / macOS）。下方 rc.1 的修复——对话框焦点恢复、SFTP 传输的实际取消行为、多实例端口交接——**尚未**经过手动实机验证，仍需测试。
+1.6.3-rc.1 / 1.6.3-rc.2 线的正式版本，同时发布到 [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.7.0) 和 npm（`tabby-mcp-server@1.7.0`）。
 
 - 新增 `submit_keyboard_interactive_response`，用于处理 MFA/TOTP 等 SSH 键盘交互式认证（[PR #8](https://github.com/GentlemanHu/Tabby-MCP/pull/8)，感谢 [@plane636](https://github.com/plane636)）。`send_input` 写入的是终端 PTY，无法触达 Tabby 的认证面板。结对编程确认只显示响应数量，不显示认证值。
 - `get_session_list` 现在会报告 `sshConnected`、`keyboardInteractivePending` 以及不含机密的提示元数据。
-- 修复 Tabby 1.0.235 上的启动崩溃：Angular 服务构造阶段 `ConfigService.store` 尚不可用，会导致 Tabby 进入第三方插件安全模式。
-- 工具数量文档已校正为 36 个（通常可见 35 个；`get_session_environment` 为可选工具且默认关闭）。
-
-### v1.6.3-rc.1 (2026-07-27) — 预发布
-
-- 修复 [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9)：结对编程确认现在覆盖 `send_input` 和敏感 SFTP 操作；取消传输会真正终止底层传输。
+- 修复 [Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9)：结对编程确认现在覆盖 `send_input`、键盘交互式认证响应和敏感 SFTP 操作；取消传输会真正终止底层传输。
 - 修复 [Issue #7](https://github.com/GentlemanHu/Tabby-MCP/issues/7)：用非阻塞、可恢复焦点的对话框替代浏览器阻塞弹窗，并让命令聚焦行为遵循“自动聚焦终端”设置。
 - 修复 [Issue #5](https://github.com/GentlemanHu/Tabby-MCP/issues/5)：仅监听回环地址、启动退避重试、旧实例识别，以及同一安装实例间经过认证的端口交接。
+- 修复 Tabby 1.0.235 上的启动崩溃：Angular 服务构造阶段 `ConfigService.store` 尚不可用。
 - 修复 SDK 1.25.2 下 Legacy SSE JSON 请求体处理、会话清理、失效 Streamable HTTP 会话、Origin 校验、fish 主动环境探测、SFTP 定位器一致性及 STDIO 重连/消息帧问题。
 - 固定 `@modelcontextprotocol/sdk` 为 1.25.2，提交 `package-lock.json`，并新增类型检查、冒烟测试和构建质量门禁。
+- 36 个 MCP 工具（通常可见 35 个；`get_session_environment` 为可选工具且默认关闭）。
 
 完整版本历史请查看 [CHANGELOG.md](CHANGELOG.md)。
 

@@ -2,6 +2,40 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.7.0] - 2026-09-09
+
+Stable release of the 1.6.3-rc.1 / 1.6.3-rc.2 line. Published to GitHub and npm.
+
+Keyboard-interactive authentication was exercised end to end in a real Tabby session (MFA through to the Jumpserver asset menu, Tabby 1.0.229 and 1.0.235 on macOS). The rest of this release is covered by typecheck, smoke regression checks, and a production build.
+
+### ✨ Added
+- **SSH keyboard-interactive authentication** ([#8](https://github.com/GentlemanHu/Tabby-MCP/pull/8), thanks [@plane636](https://github.com/plane636)): `submit_keyboard_interactive_response` answers MFA/TOTP and password prompts rendered by Tabby's authentication panel. `send_input` writes to the terminal PTY and cannot reach that panel. Prompt metadata supports both current string prompts and object-shaped prompts from older Tabby releases.
+- **Authentication state in `get_session_list`**: sessions now report `sshConnected`, `keyboardInteractivePending`, and non-secret prompt metadata so a client can tell that a session is waiting on MFA.
+
+### 🔒 Security
+- **Pair Programming approval coverage** ([Issue #9](https://github.com/GentlemanHu/Tabby-MCP/issues/9)): `send_input` follows command-confirmation settings after escape decoding; sensitive SFTP operations are independently controlled by the SFTP confirmation setting; keyboard-interactive responses follow command confirmation. Credential values are never shown in confirmation details or logs.
+- **Complete approval payloads**: confirmation dialogs show the complete decoded terminal input or SFTP write content rather than a truncated preview.
+- **Loopback hardening**: the service binds only to `127.0.0.1`; Host and Origin validation reject non-loopback and wrong-port requests across MCP endpoints.
+- **Direct tool API disabled by default**: the compatibility-only `/api/tool/:name` endpoint requires explicit configuration.
+
+### 🐛 Fixed
+- **Issue #5 — restart after an unclean shutdown**: single-flight, cancellable startup with retry/backoff, stale-instance detection, and authenticated same-install port handover.
+- **Issue #7 — terminal focus and IME disruption**: blocking `confirm()`/`alert()` replaced with a queued non-blocking dialog that restores the previously focused element; `exec_command` honors Auto-focus Terminal.
+- **Tabby 1.0.235 startup compatibility** ([#8](https://github.com/GentlemanHu/Tabby-MCP/pull/8)): tolerate `ConfigService.store` being unavailable during early Angular service construction instead of forcing Tabby into third-party-plugin safe mode.
+- **Streamable HTTP conformance**: GET and DELETE are delegated to the MCP SDK so session, protocol, Accept-header, standalone SSE, and one-stream validation apply consistently.
+- **Legacy SSE compatibility**: pass the Express-parsed JSON body to SDK message handling; clear per-session servers on every transport close path.
+- **SFTP cancellation**: cancellation persists through session setup, cancels only the transfer stream instead of the shared SFTP session, and preserves `cancelled` state.
+- **SFTP session targeting**: `profileName` matching is consistent with terminal tools.
+- **Environment probing**: fish active-probe control-flow syntax is closed exactly once.
+- **Logging**: error-level entries are retained even when ordinary logging is disabled.
+
+### 🧰 Changed
+- Pinned `@modelcontextprotocol/sdk` to `1.25.2` and committed `package-lock.json` for reproducible installs.
+- Added `typecheck`, smoke-test, and `check` quality gates.
+- Included the STDIO bridge in published npm files and GitHub release archives.
+- 36 MCP tools (35 normally visible; `get_session_environment` remains optional and disabled by default).
+- Updated English and Simplified Chinese documentation, translations, and contribution workflow.
+
 ## [1.6.3-rc.2] - 2026-07-29
 
 > ⚠️ **Prerelease.** Published to GitHub only, not to npm.

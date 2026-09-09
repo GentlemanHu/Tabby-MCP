@@ -209,6 +209,11 @@ install_plugin() {
     if [ -f "$EXTRACTED_DIR/package.json" ]; then
         cp "$EXTRACTED_DIR/package.json" "$TABBY_PLUGIN_DIR/"
     fi
+
+    if [ -f "$EXTRACTED_DIR/scripts/stdio-bridge.js" ]; then
+        mkdir -p "$TABBY_PLUGIN_DIR/scripts"
+        cp "$EXTRACTED_DIR/scripts/stdio-bridge.js" "$TABBY_PLUGIN_DIR/scripts/"
+    fi
     
     # Cleanup
     rm -rf "$TEMP_DIR"

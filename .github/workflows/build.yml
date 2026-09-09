@@ -31,10 +31,11 @@ jobs:
 
       - name: Create release archive
         run: |
-          mkdir -p release/tabby-mcp-server
+          mkdir -p release/tabby-mcp-server/scripts
           cp -r dist release/tabby-mcp-server/
           cp -r typings release/tabby-mcp-server/
           cp package.json release/tabby-mcp-server/
+          cp scripts/stdio-bridge.js release/tabby-mcp-server/scripts/
           cd release && zip -r ../tabby-mcp-${{ github.ref_name }}.zip tabby-mcp-server
           cd .. && tar -czvf tabby-mcp-${{ github.ref_name }}.tar.gz -C release tabby-mcp-server
 
