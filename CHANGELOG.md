@@ -4,6 +4,8 @@ All notable changes to Tabby-MCP will be documented in this file.
 
 ## [1.7.1] - 2026-09-15
 
+Published to GitHub and npm.
+
 ### 🐛 Fixed
 - **Missed approvals while Tabby is in the background** ([Issue #10](https://github.com/GentlemanHu/Tabby-MCP/issues/10), [Issue #11](https://github.com/GentlemanHu/Tabby-MCP/issues/11)): replacing native `confirm()` in 1.7.0 kept the keyboard/IME fix but dropped OS attention. Pending approvals now bounce the macOS Dock until Tabby is focused (without stealing focus), and on Windows/Linux flash the taskbar and bring the window forward. Attention is cleared when the user focuses Tabby, approves, rejects, or the dialog times out.
 
