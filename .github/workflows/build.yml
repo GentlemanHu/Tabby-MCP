@@ -61,26 +61,38 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create Release
+      - name: Create or update GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            tabby-mcp-${{ github.ref_name }}.zip
-            tabby-mcp-${{ github.ref_name }}.tar.gz
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ steps.classify.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ASSETS=("tabby-mcp-${{ github.ref_name }}.zip" "tabby-mcp-${{ github.ref_name }}.tar.gz")
+          PRE_FLAG=()
+          if [[ "${{ steps.classify.outputs.prerelease }}" == "true" ]]; then
+            PRE_FLAG=(--prerelease)
+          fi
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" "${ASSETS[@]}" --clobber
+          else
+            gh release create "${{ github.ref_name }}" "${ASSETS[@]}" \
+              --title "${{ github.ref_name }}" \
+              --generate-notes \
+              --latest \
+              "${PRE_FLAG[@]}"
+          fi
 
       - name: Publish to npm
         if: startsWith(github.ref, 'refs/tags/') && steps.classify.outputs.prerelease == 'false'
         env:
           NODE_AUTH_TOKEN: ''
         run: |
-          unset NODE_AUTH_TOKEN
+          set -euo pipefail
+          unset NODE_AUTH_TOKEN || true
           rm -f "${NPM_CONFIG_USERCONFIG:-}" .npmrc
+          # Trusted publishing needs npm 11.5.1+; Node 22 ships npm 10, which only knows token auth.
+          npm install -g npm@11.5.1
+          npm --version
           npm publish --access public --provenance
 
   build-check:
