@@ -389,6 +389,10 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
+### v1.7.1 (2026-09-15)
+
+- Fixed [Issue #10](https://github.com/GentlemanHu/Tabby-MCP/issues/10) / [Issue #11](https://github.com/GentlemanHu/Tabby-MCP/issues/11): pending approvals attract OS attention again after 1.7.0 replaced native `confirm()`. macOS bounces the Dock without stealing focus; Windows/Linux flash the taskbar and bring the window forward. The non-blocking dialog and IME/keyboard fix from #7 are unchanged.
+
 ### v1.7.0 (2026-09-09)
 
 Stable release of the 1.6.3-rc.1 / 1.6.3-rc.2 line. Published to [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.7.0) and npm (`tabby-mcp-server@1.7.0`).

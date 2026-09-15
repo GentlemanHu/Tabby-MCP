@@ -47,6 +47,8 @@ export default {
         'rxjs/operators',
         /^@angular\/.*/,
         /^tabby-.*/,
+        'electron',
+        '@electron/remote',
     ],
     optimization: {
         minimize: false,

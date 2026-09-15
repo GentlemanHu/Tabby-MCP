@@ -65,6 +65,11 @@ function testTransportAndLifecycleGuards() {
 function testApprovalAndCancellationGuards() {
     const dialog = read('src/services/dialog.service.ts');
     assert.equal(dialog.includes('preview.slice(0, 2000)'), false, 'Approval previews must not hide payload suffixes');
+    assert.match(dialog, /requestOsAttention\(\)/, 'Approval dialogs must request OS attention when shown in the background');
+    assert.match(dialog, /flashFrame/, 'Windows/Linux attention must use Tabby flashFrame');
+    assert.match(dialog, /bounce\('critical'\)/, 'macOS attention must bounce the Dock until focused');
+    assert.match(dialog, /bringToFront\(\)/, 'Windows/Linux must bring the window forward for pending approval');
+    assert.match(dialog, /Platform\.macOS/, 'macOS must not steal focus when requesting Dock attention');
 
     const terminal = read('src/tools/terminal.ts');
     const sendInput = terminal.slice(

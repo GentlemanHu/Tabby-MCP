@@ -351,6 +351,10 @@ npm run build
 
 ## 📝 更新日志
 
+### v1.7.1 (2026-09-15)
+
+- 修复 [Issue #10](https://github.com/GentlemanHu/Tabby-MCP/issues/10) / [Issue #11](https://github.com/GentlemanHu/Tabby-MCP/issues/11)：1.7.0 用非阻塞对话框替换原生 `confirm()` 后，后台审批不再提醒。现在 macOS 会弹跳 Dock 且不抢焦点；Windows/Linux 会闪烁任务栏并置顶窗口。#7 的键盘/输入法修复保持不变。
+
 ### v1.7.0 (2026-09-09)
 
 1.6.3-rc.1 / 1.6.3-rc.2 线的正式版本，同时发布到 [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.7.0) 和 npm（`tabby-mcp-server@1.7.0`）。

@@ -1,4 +1,6 @@
-import { Injectable } from '@angular/core';
+import { Injectable, OnDestroy } from '@angular/core';
+import { HostAppService, HostWindowService, Platform } from 'tabby-core';
+import { Subscription } from 'rxjs';
 import { McpLoggerService } from './mcpLogger.service';
 import { McpI18nService } from './i18n.service';
 
@@ -16,17 +18,26 @@ import { McpI18nService } from './i18n.service';
  * the terminal (xterm helper textarea) regains keyboard/IME input immediately.
  */
 @Injectable({ providedIn: 'root' })
-export class DialogService {
+export class DialogService implements OnDestroy {
     /** Serialize dialogs so concurrent MCP requests queue instead of stacking */
     private dialogQueue: Promise<unknown> = Promise.resolve();
     /** Auto-reject timeout so an unattended dialog never hangs the MCP client forever */
     private readonly AUTO_REJECT_MS = 120000;
     private stylesInjected = false;
+    private dockBounceId: number | null = null;
+    private attentionActive = false;
+    private focusSubscription?: Subscription;
 
     constructor(
         private logger: McpLoggerService,
-        private i18n: McpI18nService
+        private i18n: McpI18nService,
+        private hostApp: HostAppService,
+        private hostWindow: HostWindowService
     ) { }
+
+    ngOnDestroy(): void {
+        this.clearOsAttention();
+    }
 
     /**
      * Show command confirmation dialog (exec_command)
@@ -154,6 +165,7 @@ export class DialogService {
                 clearTimeout(autoRejectTimer);
                 document.removeEventListener('keydown', onKeyDown, true);
                 overlay.remove();
+                this.clearOsAttention();
                 // Restore focus so the terminal regains keyboard/IME input (Issue #7)
                 setTimeout(() => {
                     try {
@@ -187,7 +199,129 @@ export class DialogService {
             document.body.appendChild(overlay);
             // Focus the reject button so a stray Enter keypress is the safe choice
             rejectBtn.focus();
+            // Native confirm() bounced the Dock / flashed the taskbar. The DOM overlay
+            // does not, so request OS attention without going back to a blocking dialog.
+            this.requestOsAttention();
         });
+    }
+
+    /**
+     * Attract attention when Tabby is in the background so approvals are not missed
+     * (Issues #10 / #11). Native confirm() did this automatically; the DOM overlay does not.
+     *
+     * macOS: bounce the Dock until the app is focused. Do not steal keyboard focus
+     * (Issue #10, and to keep the Issue #7 IME fix).
+     * Windows/Linux: flash the taskbar and bring the window forward (Issue #11).
+     */
+    private requestOsAttention(): void {
+        if (this.hostApp.platform === Platform.Web || this.isHostWindowFocused()) {
+            return;
+        }
+
+        this.clearOsAttention();
+        this.attentionActive = true;
+
+        const host = this.hostWindow as HostWindowService & {
+            flashFrame?: () => void;
+            getWindow?: () => { flashFrame?: (flag: boolean) => void };
+        };
+
+        try {
+            if (typeof host.flashFrame === 'function') {
+                host.flashFrame();
+            } else {
+                host.getWindow?.()?.flashFrame?.(true);
+            }
+        } catch (error) {
+            this.logger.debug('Could not flash the window frame:', error);
+        }
+
+        if (this.hostApp.platform === Platform.macOS) {
+            this.startDockBounce();
+        } else {
+            try {
+                this.hostWindow.bringToFront();
+            } catch (error) {
+                this.logger.debug('Could not bring the window to the front:', error);
+            }
+        }
+
+        this.focusSubscription = this.hostWindow.windowFocused$.subscribe(() => {
+            this.clearOsAttention();
+        });
+    }
+
+    private startDockBounce(): void {
+        const dock = this.getElectronDock();
+        if (!dock || typeof dock.bounce !== 'function') {
+            return;
+        }
+        try {
+            const bounceId = dock.bounce('critical');
+            this.dockBounceId = typeof bounceId === 'number' ? bounceId : null;
+        } catch (error) {
+            this.logger.debug('Could not bounce the Dock icon:', error);
+        }
+    }
+
+    private clearOsAttention(): void {
+        this.focusSubscription?.unsubscribe();
+        this.focusSubscription = undefined;
+
+        if (this.dockBounceId !== null) {
+            try {
+                this.getElectronDock()?.cancelBounce?.(this.dockBounceId);
+            } catch {
+                // Dock APIs are best-effort
+            }
+            this.dockBounceId = null;
+        }
+
+        if (this.attentionActive) {
+            try {
+                const host = this.hostWindow as HostWindowService & {
+                    getWindow?: () => { flashFrame?: (flag: boolean) => void };
+                };
+                host.getWindow?.()?.flashFrame?.(false);
+            } catch {
+                // Frame flash is best-effort
+            }
+        }
+
+        this.attentionActive = false;
+    }
+
+    private isHostWindowFocused(): boolean {
+        try {
+            const host = this.hostWindow as HostWindowService & {
+                getWindow?: () => { isFocused?: () => boolean };
+            };
+            const focused = host.getWindow?.()?.isFocused?.();
+            if (typeof focused === 'boolean') {
+                return focused;
+            }
+        } catch {
+            // Fall through to the document heuristic
+        }
+        return typeof document !== 'undefined' && document.hasFocus();
+    }
+
+    private getElectronDock(): { bounce: (type?: string) => number; cancelBounce?: (id: number) => void } | null {
+        try {
+            let electron: any;
+            try {
+                electron = require('@electron/remote');
+            } catch {
+                electron = require('electron');
+            }
+            const dock = electron?.app?.dock;
+            if (dock && typeof dock.bounce === 'function') {
+                return dock;
+            }
+        } catch {
+            // Renderer may not have Electron (Tabby web) or @electron/remote
+        }
+        return null;
     }
 
     private injectStyles(): void {
