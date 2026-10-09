@@ -81,11 +81,11 @@
 
 <div align="center">
   <h3>🔒 Security Features</h3>
-  <p>Non-blocking confirmation dialogs for commands, raw input, and sensitive SFTP operations • Loopback-only server • Comprehensive logging</p>
+  <p>Non-blocking confirmation dialogs for commands, raw input, and sensitive SFTP operations • Loopback by default • Comprehensive logging</p>
 </div>
 
 
-> **Safety model (v1.7.0):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. Network access is restricted to loopback (`127.0.0.1`), Origin validation is applied to both MCP transports, and the direct tool API is disabled by default.
+> **Safety model (v1.7.2):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
 
 ---
 
@@ -318,6 +318,7 @@ For clients that don't support SSE, use the STDIO bridge:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Port | MCP server port | 3001 |
+| Listen address | Bind address. `0.0.0.0` exposes every interface for WSL; DNS hostnames stay rejected | 127.0.0.1 |
 | Start on Boot | Auto-start server | true |
 | Pair Programming | Confirm commands, raw input, and sensitive SFTP operations | true |
 | Confirm SFTP Operations | Apply the approval dialog to sensitive SFTP operations (`send_input` always follows command confirmation) | true |
@@ -341,7 +342,7 @@ Enable this mode to allow MCP commands to run **without switching focus** to the
 > - For split panes, commands go to the `sessionId` target, not the focused pane
 > - Dangerous commands could run without you noticing
 
-> ✅ **Recommended:** Keep Pair Programming Mode, confirmation dialogs, and file-operation confirmation enabled. The server binds only to `127.0.0.1`; the direct `/api/tool/:name` compatibility API is disabled by default.
+> ✅ **Recommended:** Keep Pair Programming Mode, confirmation dialogs, and file-operation confirmation enabled. The server binds to `127.0.0.1` unless Listen address is changed; the direct `/api/tool/:name` compatibility API is disabled by default.
 
 ---
 
@@ -388,6 +389,13 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 ---
 
 ## 📝 Changelog
+
+### v1.7.2 (2026-10-10)
+
+- Listen address is configurable (default `127.0.0.1`). Set `0.0.0.0` when a WSL or other-interface client must connect. Non-loopback binds warn that the server has no login.
+- The settings tab checks npm for a newer release and installs it through Tabby's built-in plugin installer.
+- Header actions use real icons instead of emoji.
+- View Logs shows the log in the settings page and opens Tabby's developer tools on macOS, Windows, and Linux.
 
 ### v1.7.1 (2026-09-15)
 

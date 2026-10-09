@@ -1,10 +1,11 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
-import { ConfigService } from 'tabby-core';
+import { ConfigService, HostAppService, HostWindowService, Platform } from 'tabby-core';
 import { Subscription } from 'rxjs';
 import { McpService } from '../services/mcpService';
 import { McpLoggerService } from '../services/mcpLogger.service';
 import { McpI18nService } from '../services/i18n.service';
 import { DialogService } from '../services/dialog.service';
+import { PluginUpdateService } from '../services/pluginUpdate.service';
 import { SFTPToolCategory } from '../tools/sftp';
 import { PLUGIN_VERSION } from '../version';
 
@@ -19,10 +20,18 @@ import { PLUGIN_VERSION } from '../version';
         <h3>🔌 {{ t('mcp.settings.title') }}</h3>
         <div class="header-right">
           <div class="header-icons">
-            <span class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP')" title="GitHub">🐙</span>
-            <span class="header-icon" (click)="openUrl('https://www.npmjs.com/package/tabby-mcp-server')" title="npm">📦</span>
-            <span class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/issues')" title="{{ t('mcp.about.issues') }}">🐛</span>
-            <span class="header-icon" (click)="openUrl('mailto:justfeelingme@gmail.com')" title="Email">✉️</span>
+            <button type="button" class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP')" title="GitHub" aria-label="GitHub">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.68 7.68 0 0 1 8 3.87c.67 0 1.35.09 1.98.26 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            </button>
+            <button type="button" class="header-icon" (click)="openUrl('https://www.npmjs.com/package/tabby-mcp-server')" title="npm" aria-label="npm">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M0 0v16h16V0zm13.2 13.2h-2.4V5.6H8v7.6H2.8V2.8h10.4z"/></svg>
+            </button>
+            <button type="button" class="header-icon" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/issues')" title="{{ t('mcp.about.issues') }}" [attr.aria-label]="t('mcp.about.issues')">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2a6.8 6.8 0 1 0 0 13.6A6.8 6.8 0 0 0 8 1.2zm0 2.1a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3zM6.7 12.2V7.1h2.6v5.1H6.7z"/></svg>
+            </button>
+            <button type="button" class="header-icon" (click)="openUrl('mailto:justfeelingme@gmail.com')" title="Email" aria-label="Email">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.2 2.4h13.6c.4 0 .8.3.8.8v9.6c0 .4-.4.8-.8.8H1.2c-.4 0-.8-.4-.8-.8V3.2c0-.5.4-.8.8-.8zm.6 1.5 6.2 4.3 6.2-4.3H1.8zm12.4 8.5V5.1L8 9.4 1.8 5.1v7.3h12.4z"/></svg>
+            </button>
           </div>
           <span class="version-badge" (click)="openUrl('https://github.com/GentlemanHu/Tabby-MCP/releases')">v{{ version }}</span>
         </div>
@@ -59,6 +68,23 @@ import { PLUGIN_VERSION } from '../version';
         <small class="form-text text-muted">{{ t('mcp.config.port.desc') }}</small>
       </div>
       <div class="form-group">
+        <label>{{ t('mcp.config.bindAddress') }}</label>
+        <input type="text" class="form-control" [(ngModel)]="config.store.mcp.bindAddress"
+               placeholder="127.0.0.1" (change)="saveConfig()">
+        <small class="form-text text-muted">{{ t('mcp.config.bindAddress.desc') }}</small>
+        <small class="form-text text-warning" *ngIf="isWideBind()">{{ t('mcp.config.bindAddress.warn') }}</small>
+      </div>
+      <div class="update-banner" *ngIf="updateAvailable">
+        <div>
+          <strong>{{ t('mcp.update.available', {version: latestVersion}) }}</strong>
+          <div class="update-detail">{{ t('mcp.update.current', {version: version}) }}</div>
+        </div>
+        <button class="btn btn-primary" (click)="installUpdate()" [disabled]="updateBusy">
+          {{ updateBusy ? t('mcp.update.installing') : t('mcp.update.install') }}
+        </button>
+      </div>
+      <div class="form-text text-danger" *ngIf="updateError">{{ updateError }}</div>
+      <div class="form-group">
         <div class="checkbox">
           <label>
             <input type="checkbox" [(ngModel)]="config.store.mcp.startOnBoot" (change)="saveConfig()">
@@ -89,7 +115,9 @@ import { PLUGIN_VERSION } from '../version';
         <button class="btn btn-sm btn-secondary" (click)="viewLogs()">{{ t('mcp.logging.viewLogs') }}</button>
         <button class="btn btn-sm btn-outline-secondary ml-2" (click)="exportLogsToFile()">{{ t('mcp.logging.exportJson') }}</button>
         <button class="btn btn-sm btn-outline-secondary ml-2" (click)="clearLogs()">{{ t('mcp.logging.clearLogs') }}</button>
+        <span class="log-status" *ngIf="logStatus">{{ logStatus }}</span>
       </div>
+      <pre class="log-panel" *ngIf="showLogs">{{ logText }}</pre>
       <hr />
       <h4>🤝 {{ t('mcp.pairProgramming.title') }}</h4>
       <div class="form-group">
@@ -516,14 +544,31 @@ import { PLUGIN_VERSION } from '../version';
       gap: 0.5rem;
     }
     .header-icon {
-      font-size: 1rem;
+      width: 1.7rem;
+      height: 1.7rem;
+      padding: 0.28rem;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: inherit;
       cursor: pointer;
-      opacity: 0.7;
-      transition: opacity 0.2s ease, transform 0.2s ease;
+      opacity: 0.75;
+      transition: opacity 0.2s ease, background 0.2s ease;
     }
-    .header-icon:hover {
-      opacity: 1;
-      transform: scale(1.15);
+    .header-icon svg { display: block; width: 100%; height: 100%; }
+    .header-icon:hover { opacity: 1; background: rgba(255, 255, 255, 0.08); }
+    .update-banner {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      margin: 0.75rem 0; padding: 0.75rem 1rem; border-radius: 6px;
+      background: rgba(40, 167, 69, 0.15); border: 1px solid rgba(40, 167, 69, 0.45);
+    }
+    .update-detail { opacity: 0.75; font-size: 0.85em; }
+    .log-status { margin-left: 0.75rem; font-size: 0.85em; opacity: 0.8; }
+    .log-panel {
+      max-height: 280px; overflow: auto; margin: 0.5rem 0 0;
+      padding: 0.75rem; border-radius: 4px;
+      background: rgba(0, 0, 0, 0.35);
+      font-family: monospace; font-size: 0.8em; white-space: pre-wrap;
     }
     .version-badge {
       background: rgba(0, 123, 255, 0.2);
@@ -756,17 +801,29 @@ import { PLUGIN_VERSION } from '../version';
 export class McpSettingsTabComponent implements OnInit, OnDestroy {
   version = PLUGIN_VERSION;
   saveMessage = '';
+  updateAvailable = false;
+  latestVersion = '';
+  updateBusy = false;
+  updateError = '';
+  showLogs = false;
+  logText = '';
+  logStatus = '';
   private configSub?: Subscription;
   private lastEnvironmentDetectionEnabled = false;
   private lastSftpEnabled = true;
+  private lastPort = 3001;
+  private lastBindAddress = '127.0.0.1';
 
   constructor(
     public config: ConfigService,
     private mcpService: McpService,
     private logger: McpLoggerService,
     private i18n: McpI18nService,
+    private hostApp: HostAppService,
+    private hostWindow: HostWindowService,
     private dialogService: DialogService,
-    private sftpTools: SFTPToolCategory
+    private sftpTools: SFTPToolCategory,
+    private pluginUpdate: PluginUpdateService
   ) { }
 
   ngOnInit(): void {
@@ -822,9 +879,56 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     if (this.config.store.mcp.pairProgrammingMode.confirmFileOperations === undefined) {
       this.config.store.mcp.pairProgrammingMode.confirmFileOperations = true;
     }
+    if (!this.config.store.mcp.bindAddress) {
+      this.config.store.mcp.bindAddress = '127.0.0.1';
+    }
 
     this.lastEnvironmentDetectionEnabled = this.config.store.mcp.environmentDetection.enabled === true;
     this.lastSftpEnabled = this.config.store.mcp.sftp.enabled !== false;
+    this.lastPort = this.config.store.mcp.port || 3001;
+    this.lastBindAddress = this.config.store.mcp.bindAddress;
+    void this.checkForUpdate();
+  }
+
+  isWideBind(): boolean {
+    const bindAddress = this.config.store.mcp?.bindAddress || '127.0.0.1';
+    return bindAddress !== '127.0.0.1';
+  }
+
+  async checkForUpdate(): Promise<void> {
+    try {
+      const info = await this.pluginUpdate.check();
+      this.updateAvailable = info.available;
+      this.latestVersion = info.latest;
+      this.updateError = '';
+    } catch (error: any) {
+      this.updateError = '';
+      this.logger.debug('Plugin update check failed:', error);
+    }
+  }
+
+  async installUpdate(): Promise<void> {
+    if (!this.latestVersion || this.updateBusy) {
+      return;
+    }
+    const confirmed = await this.dialogService.showOperationConfirmation(
+      this.t('mcp.update.install'),
+      'tabby-mcp-server',
+      this.t('mcp.update.confirm', { version: this.latestVersion })
+    );
+    if (!confirmed) {
+      return;
+    }
+    this.updateBusy = true;
+    this.updateError = '';
+    try {
+      await this.pluginUpdate.install(this.latestVersion);
+      this.saveMessage = this.t('mcp.update.restart');
+    } catch (error: any) {
+      this.updateError = error?.message || String(error);
+    } finally {
+      this.updateBusy = false;
+    }
   }
 
   ngOnDestroy(): void {
@@ -859,11 +963,26 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   }
 
   viewLogs(): void {
-    const logs = this.logger.exportLogs();
-    console.log('MCP Logs:', logs);
-    // Native alert() breaks keyboard/IME focus in the renderer (Issue #7) - use the save message instead
-    this.saveMessage = this.t('mcp.logging.printedToConsole');
-    setTimeout(() => { this.saveMessage = ''; }, 5000);
+    const entries = this.logger.getLogs();
+    this.logText = entries.length
+      ? entries.map(entry => {
+          const time = entry.timestamp instanceof Date ? entry.timestamp.toISOString() : String(entry.timestamp);
+          const context = entry.context !== undefined ? ' ' + JSON.stringify(entry.context) : '';
+          return `${time} [${entry.level.toUpperCase()}] ${entry.message}${context}`;
+        }).join('\n')
+      : this.t('mcp.logging.empty');
+    this.showLogs = true;
+    console.log('MCP Logs:', this.logger.exportLogs());
+
+    const canOpenConsole = this.hostApp.platform !== Platform.Web;
+    if (canOpenConsole) {
+      try {
+        this.hostWindow.openDevTools();
+      } catch {
+        // The inline panel below still shows the logs.
+      }
+    }
+    this.logStatus = this.t(canOpenConsole ? 'mcp.logging.consoleOpened' : 'mcp.logging.shownHere');
   }
 
   exportLogsToFile(): void {
@@ -882,6 +1001,9 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
 
   clearLogs(): void {
     this.logger.clearLogs();
+    if (this.showLogs) {
+      this.logText = this.t('mcp.logging.empty');
+    }
   }
 
   /**
@@ -903,8 +1025,12 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   }
 
   async saveConfig(): Promise<void> {
+    this.config.store.mcp.bindAddress = this.mcpService.getBindAddress();
     const environmentDetectionEnabled = this.config.store.mcp?.environmentDetection?.enabled === true;
     const sftpEnabled = this.config.store.mcp?.sftp?.enabled !== false;
+    const endpointChanged =
+      (this.config.store.mcp.port || 3001) !== this.lastPort ||
+      (this.config.store.mcp.bindAddress || '127.0.0.1') !== this.lastBindAddress;
     const toolVisibilityChanged =
       environmentDetectionEnabled !== this.lastEnvironmentDetectionEnabled ||
       sftpEnabled !== this.lastSftpEnabled;
@@ -912,13 +1038,15 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     await this.config.save();
     this.lastEnvironmentDetectionEnabled = environmentDetectionEnabled;
     this.lastSftpEnabled = sftpEnabled;
+    this.lastPort = this.config.store.mcp.port || 3001;
+    this.lastBindAddress = this.config.store.mcp.bindAddress || '127.0.0.1';
 
-    if (toolVisibilityChanged && this.isRunning) {
+    if ((toolVisibilityChanged || endpointChanged) && this.isRunning) {
       // Non-blocking dialog: native confirm() breaks keyboard/IME focus (Issue #7)
       const shouldRestart = await this.dialogService.showOperationConfirmation(
         this.t('mcp.server.restart'),
         'MCP',
-        this.t('mcp.tools.restart.confirm')
+        this.t(toolVisibilityChanged ? 'mcp.tools.restart.confirm' : 'mcp.config.restart.confirm')
       );
       if (shouldRestart) {
         await this.restartServer();
@@ -975,7 +1103,7 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
       mcpServers: {
         'Tabby MCP': {
           type: 'streamable_http',
-          url: `http://127.0.0.1:${port}/mcp`
+          url: `http://${this.mcpService.getAdvertisedHost()}:${port}/mcp`
         }
       }
     }, null, 2);

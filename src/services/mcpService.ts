@@ -185,7 +185,7 @@ export class McpService {
         // documented as a public API.
         this.app.post('/internal/shutdown', (req: Request, res: Response) => {
             const suppliedToken = req.headers['x-tabby-mcp-control-token'];
-            if (!this.isLoopbackRequest(req) || !this.controlToken || suppliedToken !== this.controlToken) {
+            if (!this.isControlPlaneRequest(req) || !this.controlToken || suppliedToken !== this.controlToken) {
                 res.status(403).json({ error: 'Forbidden' });
                 return;
             }
@@ -503,16 +503,53 @@ export class McpService {
     }
 
     /**
-     * Host header validation. The server listens on IPv4 loopback only, so any
-     * other hostname (or a mismatched port) indicates a rebinding attempt.
+     * Configured listen address. Invalid values fall back to loopback.
+     * 0.0.0.0 means every interface (needed for WSL); it is never the default.
+     */
+    public getBindAddress(): string {
+        const raw = String(this.config.store.mcp?.bindAddress || '127.0.0.1').trim();
+        if (raw === '0.0.0.0' || raw === '127.0.0.1') {
+            return raw;
+        }
+        const parts = raw.split('.');
+        const ipv4 = parts.length === 4 && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+        return ipv4 ? raw : '127.0.0.1';
+    }
+
+    /** Address clients on this machine should use in the MCP URL. */
+    public getAdvertisedHost(): string {
+        const bindAddress = this.getBindAddress();
+        return bindAddress === '0.0.0.0' ? '127.0.0.1' : bindAddress;
+    }
+
+    private isAllowedHostname(hostname: string): boolean {
+        const normalized = hostname.replace(/^\[|\]$/g, '');
+        if (normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1') {
+            return true;
+        }
+        const bindAddress = this.getBindAddress();
+        if (bindAddress !== '0.0.0.0' && bindAddress !== '127.0.0.1') {
+            return normalized === bindAddress;
+        }
+        if (bindAddress !== '0.0.0.0') {
+            return false;
+        }
+        // All-interfaces: accept IP literals so WSL/LAN clients work, but reject
+        // DNS names so a rebinding page cannot call the unauthenticated API.
+        const parts = normalized.split('.');
+        return parts.length === 4 && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+    }
+
+    /**
+     * Host header validation. Loopback is the default. A wider bind still rejects
+     * DNS hostnames, which is the DNS-rebinding case.
      */
     private checkHost(req: Request, res: Response): boolean {
         const host = req.headers.host;
         try {
             const parsed = new URL(`http://${host || ''}`);
-            const validHostname = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
             const validPort = parsed.port === String(req.socket.localPort || this.config.store.mcp?.port || 3001);
-            if (validHostname && validPort) {
+            if (this.isAllowedHostname(parsed.hostname) && validPort) {
                 return true;
             }
         } catch {
@@ -531,15 +568,31 @@ export class McpService {
     }
 
     /**
+     * Handover is loopback when we listen on loopback or every interface.
+     * A specific bind address is not reachable via 127.0.0.1, so the same-host
+     * connection to that address is accepted too. The control token is still required.
+     */
+    private isControlPlaneRequest(req: Request): boolean {
+        if (this.isLoopbackRequest(req)) {
+            return true;
+        }
+        const bindAddress = this.getBindAddress();
+        if (bindAddress === '127.0.0.1' || bindAddress === '0.0.0.0') {
+            return false;
+        }
+        const address = req.socket.remoteAddress;
+        return address === bindAddress || address === `::ffff:${bindAddress}`;
+    }
+
+    /**
      * Validate origin header for security
      */
     private isValidOrigin(origin: string, localPort: number | undefined): boolean {
         try {
             const url = new URL(origin);
             const validProtocol = url.protocol === 'http:' || url.protocol === 'https:';
-            const validHostname = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
             const validPort = url.port === String(localPort || this.config.store.mcp?.port || 3001);
-            return validProtocol && validHostname && validPort;
+            return validProtocol && this.isAllowedHostname(url.hostname) && validPort;
         } catch {
             return false;
         }
@@ -734,9 +787,8 @@ export class McpService {
                 reject(err);
             });
 
-            // Bind to loopback only: MCP has no authentication, so it must not be
-            // reachable from other machines on the network
-            server.listen(serverPort, '127.0.0.1', () => {
+            const bindAddress = this.getBindAddress();
+            server.listen(serverPort, bindAddress, () => {
                 if (generation !== this.lifecycleGeneration) {
                     settled = true;
                     server.close();
@@ -749,9 +801,10 @@ export class McpService {
                 settled = true;
                 this.httpServer = server;
                 this.isRunning = true;
-                this.logger.info(`MCP server started on 127.0.0.1:${serverPort}`);
-                this.logger.info(`  Streamable HTTP: http://127.0.0.1:${serverPort}/mcp`);
-                this.logger.info(`  Legacy SSE: http://127.0.0.1:${serverPort}/sse`);
+                const advertised = this.getAdvertisedHost();
+                this.logger.info(`MCP server started on ${bindAddress}:${serverPort}`);
+                this.logger.info(`  Streamable HTTP: http://${advertised}:${serverPort}/mcp`);
+                this.logger.info(`  Legacy SSE: http://${advertised}:${serverPort}/sse`);
                 resolve();
             });
         });
@@ -764,7 +817,7 @@ export class McpService {
     private async isStaleMcpInstance(serverPort: number): Promise<boolean> {
         return new Promise((resolve) => {
             const req = http.get({
-                host: '127.0.0.1',
+                host: this.getAdvertisedHost(),
                 port: serverPort,
                 path: '/health',
                 timeout: 1000
@@ -795,7 +848,7 @@ export class McpService {
 
         return new Promise((resolve) => {
             const req = http.request({
-                host: '127.0.0.1',
+                host: this.getAdvertisedHost(),
                 port: serverPort,
                 path: '/internal/shutdown',
                 method: 'POST',

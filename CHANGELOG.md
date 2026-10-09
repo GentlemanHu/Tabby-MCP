@@ -2,6 +2,18 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.7.2] - 2026-10-10
+
+### ✨ Added
+- **Configurable listen address**: Settings → MCP → Listen address. Default stays `127.0.0.1`. `0.0.0.0` or a specific IPv4 address is opt-in for WSL and other interfaces. DNS hostnames are still rejected, so a wider bind does not reopen DNS rebinding. Changing the port or address offers a server restart.
+- **In-settings update**: on open, the tab checks npm for a newer `tabby-mcp-server` and installs it through `PlatformService.installPlugin`, the same call Tabby's plugin manager uses, then asks Tabby to restart.
+
+### 🎨 Changed
+- Settings header actions use GitHub, npm, issues, and mail icons instead of emoji.
+
+### 🐛 Fixed
+- **View Logs**: the button now shows the log in the settings page and opens Tabby's developer tools on macOS, Windows, and Linux. The web build shows the in-page log only.
+
 ## [1.7.1] - 2026-09-15
 
 Published to GitHub and npm.

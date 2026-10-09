@@ -57,6 +57,8 @@ export interface ActiveCommand {
 export interface McpConfig {
     port: number;
     host: string;
+    /** Interface to bind. 127.0.0.1 (default), a specific IPv4 address, or 0.0.0.0 */
+    bindAddress: string;
     enableLogging: boolean;
     startOnBoot: boolean;
     logLevel: 'debug' | 'info' | 'warn' | 'error';

@@ -46,7 +46,9 @@ function testLegacySseParsedBody() {
         /handlePostMessage\(req,\s*res,\s*req\.body\)/,
         'Legacy SSE must pass the body already parsed by express.json()'
     );
-    assert.match(source, /listen\(serverPort,\s*'127\.0\.0\.1'/, 'Server must bind to loopback only');
+    assert.match(read('src/services/mcpConfigProvider.ts'), /bindAddress: '127\.0\.0\.1'/, 'Loopback must stay the default listen address');
+    assert.match(source, /server\.listen\(serverPort,\s*bindAddress/, 'Listen address must come from configuration');
+    assert.equal(/server\.listen\(serverPort\)/.test(source), false, 'The server must not listen on every interface by default');
     assert.match(source, /this\.checkOrigin\(req,\s*res\)/, 'MCP endpoints must validate Origin');
 }
 

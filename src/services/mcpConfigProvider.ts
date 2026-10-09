@@ -10,6 +10,7 @@ export class McpConfigProvider extends ConfigProvider {
         mcp: {
             port: 3001,
             host: 'http://127.0.0.1:3001',
+            bindAddress: '127.0.0.1',
             enableLogging: true,
             startOnBoot: true,
             logLevel: 'info',
