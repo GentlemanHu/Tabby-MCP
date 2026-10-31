@@ -2,6 +2,18 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.7.3-rc.1] - 2026-10-31
+
+> ⚠️ **Prerelease.** Published to GitHub only, not to npm.
+
+### 🐛 Fixed
+- **SFTP idle session auto-recovery** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)): Invalidate both MCP cache and Tabby's internal `sshSession.sftp` wrapper when an SFTP channel drops or fails health checks. When long-idle bastions return `SSH_FX_FAILURE` (General failure), all SFTP operations now automatically self-heal by opening a fresh channel and retrying once. If auto-recovery fails, actionable guidance is returned.
+- **SSH disconnected session handling ("Press any key to reconnect")**: When an SSH session closes, `send_input` now triggers Tabby's native `reconnect()`, honoring the "Press any key to reconnect" prompt. `exec_command` attempts automatic reconnection before executing.
+
+### ✨ Added
+- **`reconnect_session` tool**: Explicitly reconnect disconnected or closed terminal sessions (especially SSH tabs offering reconnect). Total MCP tools increased to 37.
+- **Session state reporting in `get_session_list`**: Sessions now report `isSessionClosed`, `reconnectOffered`, and `canReconnect`.
+
 ## [1.7.2] - 2026-10-10
 
 ### ✨ Added

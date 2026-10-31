@@ -36,6 +36,7 @@ export interface CommandResult {
     error?: string;
     outputId?: string;
     totalLines?: number;
+    canReconnect?: boolean;
 }
 
 /**

@@ -67,6 +67,7 @@ export class TerminalToolCategory extends BaseToolCategory {
         this.registerTool(this.createExecCommandTool());
         this.registerTool(this.createSendInputTool());
         this.registerTool(this.createSubmitKeyboardInteractiveResponseTool());
+        this.registerTool(this.createReconnectSessionTool());
         this.registerTool(this.createGetTerminalBufferTool());
         this.registerTool(this.createAbortCommandTool());
         this.registerTool(this.createGetCommandStatusTool());
@@ -352,6 +353,12 @@ export class TerminalToolCategory extends BaseToolCategory {
             description: `Get list of all terminal sessions with stable IDs and metadata.
 Use sessionId (stable UUID) for reliable session targeting.
 
+Session status fields:
+- sshConnected: true if SSH connection is active
+- isSessionClosed: true if the underlying shell/session has exited or closed
+- reconnectOffered: true if Tabby is offering "Press any key to reconnect"
+- canReconnect: true if the tab supports reconnect_session
+
 For split panes:
 - isSplit: true if this session is inside a split tab
 - splitTabIndex: Index of parent tab (use for grouping panes)
@@ -364,6 +371,9 @@ For split panes:
                 const result = sessions.map(s => {
                     const tabAny = s.tab as any;
                     const keyboardInteractivePrompt = this.getKeyboardInteractivePrompt(s);
+                    const isSessionClosed = tabAny.session ? tabAny.session.open === false : false;
+                    const reconnectOffered = Boolean(tabAny.reconnectOffered);
+                    const canReconnect = typeof tabAny.reconnect === 'function';
                     return {
                         sessionId: s.sessionId,
                         tabIndex: s.tabIndex,
@@ -372,6 +382,9 @@ For split panes:
                         isActive: this.app.activeTab === s.tabParent,
                         hasActiveCommand: this._activeCommands.has(s.sessionId),
                         sshConnected: tabAny.sshSession?.open === true,
+                        isSessionClosed,
+                        reconnectOffered,
+                        canReconnect,
                         keyboardInteractivePending: Boolean(keyboardInteractivePrompt),
                         keyboardInteractivePrompt: this.describeKeyboardInteractivePrompt(keyboardInteractivePrompt),
                         profile: tabAny.profile ? {
@@ -461,6 +474,23 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                 }
 
                 try {
+                    // If session is closed and supports reconnect (e.g. SSH "Press any key to reconnect"),
+                    // attempt auto-reconnect before failing (Issue #14 companion)
+                    const tabAny = session.tab as any;
+                    if (tabAny.session && tabAny.session.open === false && typeof tabAny.reconnect === 'function') {
+                        this.logger.info(`[exec_command] Session ${session.sessionId} is closed. Attempting auto-reconnect before command execution...`);
+                        try {
+                            await tabAny.reconnect();
+                            const waitStart = Date.now();
+                            while (Date.now() - waitStart < 8000) {
+                                if (tabAny.session?.open === true) break;
+                                await new Promise(r => setTimeout(r, 200));
+                            }
+                        } catch (reconnectErr: any) {
+                            this.logger.warn(`[exec_command] Auto-reconnect failed: ${reconnectErr.message || reconnectErr}`);
+                        }
+                    }
+
                     // Focus terminal ONLY if background execution is disabled AND
                     // the user has not turned off auto-focus (Issue #7: focus stealing
                     // interrupts the user's typing/IME in other tabs)
@@ -657,12 +687,32 @@ Special keys: \\x03 (Ctrl+C), \\x04 (Ctrl+D), \\x1b (Escape), \\r (Enter)`,
                     }
                 }
 
+                const tabAny = session.tab as any;
+                let reconnectTriggered = false;
+                if ((tabAny.reconnectOffered || tabAny.session?.open === false) && typeof tabAny.reconnect === 'function') {
+                    this.logger.info(`[send_input] Session ${session.sessionId} is closed with reconnect offered. Triggering reconnect...`);
+                    try {
+                        await tabAny.reconnect();
+                        reconnectTriggered = true;
+                    } catch (e: any) {
+                        this.logger.warn(`[send_input] Auto-reconnect failed: ${e.message || e}`);
+                    }
+                }
+
                 try {
                     session.tab.sendInput(processedInput);
                     this.logger.info(`Sent input to session ${session.sessionId}`);
 
                     return {
-                        content: [{ type: 'text', text: JSON.stringify({ success: true, sessionId: session.sessionId, message: 'Input sent' }) }]
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: true,
+                                sessionId: session.sessionId,
+                                reconnectTriggered,
+                                message: reconnectTriggered ? 'Input sent and session reconnect triggered' : 'Input sent'
+                            })
+                        }]
                     };
                 } catch (error: any) {
                     this.logger.error(`Error sending input to session ${session.sessionId}:`, error);
@@ -842,6 +892,98 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                                 success: false,
                                 sessionId: session.sessionId,
                                 error: `Failed to submit keyboard-interactive response: ${error.message || error}`
+                            })
+                        }]
+                    };
+                }
+            }
+        };
+    }
+
+    /**
+     * Tool: Reconnect a disconnected terminal session (e.g. SSH session closed)
+     */
+    private createReconnectSessionTool(): McpTool {
+        return {
+            name: 'reconnect_session',
+            description: `Reconnect a disconnected or closed terminal session (e.g. SSH session displaying "session closed / Press any key to reconnect").
+Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
+            schema: z.object({
+                sessionId: z.string().optional().describe('Stable session ID (recommended)'),
+                tabIndex: z.number().optional().describe('Tab index (legacy)'),
+                title: z.string().optional().describe('Match by title'),
+                profileName: z.string().optional().describe('Match by profile name'),
+                timeout: z.number().optional().describe('Timeout in ms waiting for reconnection (default: 15000)')
+            }),
+            handler: async (params: {
+                sessionId?: string;
+                tabIndex?: number;
+                title?: string;
+                profileName?: string;
+                timeout?: number;
+            }) => {
+                const session = this.findSessionByLocator(params);
+                if (!session) {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                error: 'No matching terminal session found',
+                                hint: 'Use get_session_list to see available sessions'
+                            })
+                        }]
+                    };
+                }
+
+                const tabAny = session.tab as any;
+                if (typeof tabAny.reconnect !== 'function') {
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: `Tab type ${session.tab.constructor.name} does not support reconnect()`
+                            })
+                        }]
+                    };
+                }
+
+                try {
+                    this.logger.info(`[reconnect_session] Reconnecting session ${session.sessionId} (${session.tab.title})...`);
+                    await tabAny.reconnect();
+
+                    const timeoutMs = params.timeout ?? 15000;
+                    const startTime = Date.now();
+                    while (Date.now() - startTime < timeoutMs) {
+                        if (tabAny.session?.open === true) {
+                            break;
+                        }
+                        await new Promise(r => setTimeout(r, 200));
+                    }
+
+                    const reconnected = tabAny.session?.open === true;
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: reconnected,
+                                sessionId: session.sessionId,
+                                reconnected,
+                                sshConnected: tabAny.sshSession?.open === true,
+                                keyboardInteractivePending: Boolean(this.getKeyboardInteractivePrompt(session)),
+                                message: reconnected
+                                    ? 'Session reconnected successfully'
+                                    : 'Reconnect initiated, but session is not yet open (may still be connecting or waiting for auth)'
+                            })
+                        }]
+                    };
+                } catch (error: any) {
+                    this.logger.error(`[reconnect_session] Failed to reconnect session ${session.sessionId}:`, error);
+                    return {
+                        content: [{
+                            type: 'text', text: JSON.stringify({
+                                success: false,
+                                sessionId: session.sessionId,
+                                error: error.message || String(error)
                             })
                         }]
                     };
@@ -1382,10 +1524,14 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
             const sessionObj = tabAny.session;
             if (sessionObj && sessionObj.open === false) {
                 this.logger.warn(`[waitForCommandOutput] Session ${session.sessionId} disconnected: session.open=false`);
+                const canReconnect = typeof tabAny.reconnect === 'function';
                 return {
                     success: false,
                     output: '',
-                    error: 'Session disconnected during execution',
+                    error: canReconnect
+                        ? "Session is closed ('Press any key to reconnect'). Use reconnect_session to reconnect."
+                        : 'Session disconnected during execution',
+                    canReconnect,
                     exitCode: -1
                 };
             }
@@ -1525,10 +1671,14 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                     this.logger.warn(`[StreamCapture] Session ${session.sessionId} disconnected: session.open=false`);
                     resolved = true;
                     cleanup();
+                    const canReconnect = typeof tabAny.reconnect === 'function';
                     resolve({
                         success: false,
                         output: '',
-                        error: 'Session disconnected during execution',
+                        error: canReconnect
+                            ? "Session is closed ('Press any key to reconnect'). Use reconnect_session to reconnect."
+                            : 'Session disconnected during execution',
+                        canReconnect,
                         exitCode: -1
                     });
                 }

@@ -15,8 +15,8 @@ function testToolCount() {
         'src/tools/sftp.ts'
     ];
     const counts = files.map(file => (read(file).match(/this\.registerTool\(/g) || []).length);
-    assert.deepEqual(counts, [9, 15, 12], 'Unexpected tool count per category');
-    assert.equal(counts.reduce((sum, count) => sum + count, 0), 36, 'Expected 36 registered MCP tools');
+    assert.deepEqual(counts, [10, 15, 12], 'Unexpected tool count per category');
+    assert.equal(counts.reduce((sum, count) => sum + count, 0), 37, 'Expected 37 registered MCP tools');
 }
 
 function testNoBlockingBrowserDialogs() {
@@ -82,7 +82,7 @@ function testApprovalAndCancellationGuards() {
     assert.match(sendInput, /JSON\.stringify\(processedInput\)/, 'send_input must show the decoded terminal input');
     const keyboardInteractive = terminal.slice(
         terminal.indexOf("name: 'submit_keyboard_interactive_response'"),
-        terminal.indexOf('private parseEnvironmentFromBuffer')
+        terminal.indexOf("name: 'reconnect_session'")
     );
     assert.match(
         keyboardInteractive,
@@ -99,11 +99,15 @@ function testApprovalAndCancellationGuards() {
         false,
         'keyboard-interactive responses must not remain staged without submission'
     );
+    assert.match(terminal, /createReconnectSessionTool/, 'reconnect_session tool must be implemented');
+    assert.match(terminal, /tabAny\.reconnect\(\)/, 'reconnect must call Tabby tab.reconnect()');
     assert.equal(/else; printf 'shell'; end; end/.test(terminal), false, 'fish probe must close its if chain exactly once');
 
     const sftp = read('src/tools/sftp.ts');
     assert.match(sftp, /cancelRequested: boolean/, 'Transfers must retain cancellation requested during setup');
     assert.equal(sftp.includes('sftpSession.end()'), false, 'Cancelling one transfer must not close the shared SFTP session');
+    assert.match(sftp, /delete \(sshSession as any\)\.sftp/, 'SFTP invalidation must clear Tabby internal sftp wrapper');
+    assert.match(sftp, /executeWithSftp/, 'SFTP operations must support auto-recovery on stale channels');
 }
 
 function testTranslations() {

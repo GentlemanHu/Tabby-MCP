@@ -14,7 +14,7 @@
 
 **A Comprehensive MCP Server Plugin for Tabby Terminal**
 
-*Connect AI assistants to your terminal with full control — 36 MCP tools including SFTP support*
+*Connect AI assistants to your terminal with full control — 37 MCP tools including SFTP support*
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -237,7 +237,7 @@ For clients that don't support SSE, use the STDIO bridge:
 
 ## 🛠️ Available Tools
 
-### Terminal Control (9)
+### Terminal Control (10)
 
 | Tool | Description |
 |------|-------------|
@@ -245,6 +245,7 @@ For clients that don't support SSE, use the STDIO bridge:
 | `exec_command` | Execute command with flexible session targeting |
 | `send_input` | Send interactive input (Ctrl+C, etc) |
 | `submit_keyboard_interactive_response` | Submit MFA, password, or other SSH keyboard-interactive responses |
+| `reconnect_session` | Reconnect a closed or disconnected terminal session |
 | `get_terminal_buffer` | Read terminal buffer (defaults to active session) |
 | `abort_command` | Abort running command |
 | `get_command_status` | Monitor active commands |
@@ -377,7 +378,7 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 | Feature | Original | This Project |
 |---------|----------|--------------|
-| MCP Tools | 4 | **36** |
+| MCP Tools | 4 | **37** |
 | Tab Management | ❌ | ✅ |
 | Profile/SSH | ❌ | ✅ |
 | SFTP Support | ❌ | ✅ |
@@ -389,6 +390,15 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 ---
 
 ## 📝 Changelog
+
+### v1.7.3-rc.1 (2026-10-31) — prerelease
+
+> ⚠️ **Prerelease, published to GitHub only (not on npm).**
+
+- **SFTP idle auto-recovery** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)): Invalidate both MCP cache and Tabby's underlying single-instance `sshSession.sftp` wrapper on channel errors or health-check timeouts. SFTP operations on long-idle bastion connections now auto-recover with a fresh channel retry instead of dying with `SSH_FX_FAILURE`.
+- **SSH disconnected session handling ("Press any key to reconnect")**: When an SSH session closes, `send_input` triggers Tabby's native `reconnect()` to fulfill the reconnect prompt. `exec_command` attempts automatic reconnection before executing.
+- **`reconnect_session` tool**: Explicitly reconnect disconnected terminal sessions. Total tools: 37 (Terminal 10 + TabManagement 15 + SFTP 12).
+- **Session state reporting**: `get_session_list` now reports `isSessionClosed`, `reconnectOffered`, and `canReconnect`.
 
 ### v1.7.2 (2026-10-10)
 

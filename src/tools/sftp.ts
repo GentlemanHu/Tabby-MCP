@@ -391,6 +391,98 @@ export class SFTPToolCategory extends BaseToolCategory {
         return null;
     }
 
+    /**
+     * Invalidate cached SFTP session and clear Tabby's internal `sshSession.sftp` wrapper (Issue #14).
+     *
+     * In Tabby's `SSHSession.openSFTP()`, `this.sftp` is cached on the SSHSession
+     * instance and never cleared unless manually reset. When a bastion or server drops
+     * the idle SFTP subsystem channel overnight while the shell stays open, Tabby's
+     * `openSFTP()` would otherwise keep returning the dead SFTPWrapper forever,
+     * causing every operation to fail with SSH_FX_FAILURE (General failure).
+     */
+    private invalidateSFTPSession(sshSession: any): void {
+        if (!sshSession) return;
+        this.sftpSessionCache.delete(sshSession);
+
+        const internalSftp = (sshSession as any).sftp;
+        if (internalSftp) {
+            try {
+                internalSftp.end?.();
+            } catch {
+                // Ignore any error on ending a dead channel
+            }
+            try {
+                delete (sshSession as any).sftp;
+            } catch {
+                (sshSession as any).sftp = undefined;
+            }
+        }
+    }
+
+    /**
+     * Determine if an error indicates a broken/closed SFTP subsystem channel (Issue #14).
+     */
+    private isChannelFailureError(error: any): boolean {
+        if (!error) return false;
+        const msg = String(error.message || error);
+        const code = error.code;
+        return (
+            code === 4 ||
+            code === 'SSH_FX_FAILURE' ||
+            msg.includes('SSH_FX_FAILURE') ||
+            msg.includes('General failure') ||
+            msg.includes('status_code: Failure') ||
+            msg.includes('Channel closed') ||
+            msg.includes('Connection lost') ||
+            msg.includes('No response from server')
+        );
+    }
+
+    /**
+     * Format SFTP error with actionable hints for AI clients and users.
+     */
+    private formatSftpError(error: any, operation: string): { error: string; hint?: string } {
+        const rawMessage = error?.message || String(error);
+        if (this.isChannelFailureError(error)) {
+            return {
+                error: `SFTP channel failure during ${operation}: ${rawMessage}`,
+                hint: 'The remote server/bastion dropped the idle SFTP subsystem channel while the shell stayed active. Reconnect the SSH tab (e.g. using reconnect_session) if auto-recovery was unable to restore the channel.'
+            };
+        }
+        return { error: rawMessage };
+    }
+
+    /**
+     * Execute an SFTP action with automatic single-retry channel recovery (Issue #14).
+     * If the action fails due to a dead SFTP channel (e.g. overnight idle SSH_FX_FAILURE),
+     * it invalidates the stale channel, opens a fresh one, and retries once automatically.
+     */
+    private async executeWithSftp<T>(
+        sessionTab: any,
+        operationName: string,
+        action: (sftp: any) => Promise<T>
+    ): Promise<T> {
+        const sshSession = sessionTab?.sshSession;
+        const sftp = await this.getSFTPSession(sessionTab);
+        if (!sftp) {
+            throw new Error('Could not open SFTP session');
+        }
+
+        try {
+            return await action(sftp);
+        } catch (error: any) {
+            if (this.isChannelFailureError(error) && sshSession) {
+                this.logger.warn(`[SFTP] ${operationName} failed with channel error: ${error.message || error}. Auto-invalidating stale channel and retrying once...`);
+                this.invalidateSFTPSession(sshSession);
+                const freshSftp = await this.getSFTPSession(sessionTab);
+                if (freshSftp) {
+                    return await action(freshSftp);
+                }
+            }
+            throw error;
+        }
+    }
+
     private async getSFTPSession(sshTab: any): Promise<any> {
         try {
             const sshSession = sshTab.sshSession;
@@ -402,8 +494,8 @@ export class SFTPToolCategory extends BaseToolCategory {
             // Check if SSH session itself is still open
             if (!sshSession.open) {
                 this.logger.debug('[getSFTPSession] sshSession.open is false');
-                // Clear any stale cache entry
-                this.sftpSessionCache.delete(sshSession);
+                // Clear any stale cache entry and underlying wrapper
+                this.invalidateSFTPSession(sshSession);
                 return null;
             }
 
@@ -415,15 +507,18 @@ export class SFTPToolCategory extends BaseToolCategory {
                 // Check TTL expiration (proactive cleanup before issues occur)
                 if (age > this.SFTP_SESSION_TTL_MS) {
                     this.logger.info(`[getSFTPSession] SFTP session expired (age: ${Math.round(age / 1000)}s > TTL: ${this.SFTP_SESSION_TTL_MS / 1000}s). Recreating...`);
-                    this.sftpSessionCache.delete(sshSession);
+                    this.invalidateSFTPSession(sshSession);
                     // Fall through to create new session
                 } else {
                     // CRITICAL: Validate cached session is still alive
                     // Even within TTL, network issues can cause session to become stale
                     try {
-                        // Quick health check with a lightweight operation
+                        // Quick health check with a lightweight probe
+                        const probe = typeof cached.sftpSession.realpath === 'function'
+                            ? cached.sftpSession.realpath('.')
+                            : cached.sftpSession.stat('/');
                         await Promise.race([
-                            cached.sftpSession.stat('/'),
+                            probe,
                             new Promise((_, reject) =>
                                 setTimeout(() => reject(new Error('SFTP health check timeout')), 3000)
                             )
@@ -431,9 +526,9 @@ export class SFTPToolCategory extends BaseToolCategory {
                         this.logger.debug(`[getSFTPSession] Cached SFTP session validated (age: ${Math.round(age / 1000)}s)`);
                         return cached.sftpSession;
                     } catch (healthError: any) {
-                        // Cached session is stale/broken, remove and recreate
+                        // Cached session is stale/broken, invalidate both cache and Tabby's internal wrapper
                         this.logger.warn(`[getSFTPSession] Cached SFTP session failed health check: ${healthError.message}. Recreating...`);
-                        this.sftpSessionCache.delete(sshSession);
+                        this.invalidateSFTPSession(sshSession);
                         // Fall through to create new session
                     }
                 }
@@ -477,7 +572,7 @@ export class SFTPToolCategory extends BaseToolCategory {
         for (const [sshSession, cached] of this.sftpSessionCache.entries()) {
             // Remove if SSH session is closed OR TTL expired
             if (sshSession.open === false || (now - cached.createdAt) > this.SFTP_SESSION_TTL_MS) {
-                this.sftpSessionCache.delete(sshSession);
+                this.invalidateSFTPSession(sshSession);
                 cleaned++;
             }
         }
@@ -519,13 +614,8 @@ Returns: Array of {name, path, isDirectory, size, modifiedTime}`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
                     const remotePath = params.path || '/';
-                    const files = await sftp.readdir(remotePath);
+                    const files = await this.executeWithSftp<any[]>(session.tab, 'sftp_list_files', sftp => sftp.readdir(remotePath));
                     const fileList: SFTPFileInfo[] = files.map((f: any) => ({
                         name: f.name,
                         path: f.fullPath,
@@ -533,6 +623,7 @@ Returns: Array of {name, path, isDirectory, size, modifiedTime}`,
                         isSymlink: f.isSymlink,
                         size: f.size,
                         mode: f.mode,
+                        permissions: f.mode ? f.mode.toString(8) : '',
                         modifiedTime: f.modified?.toISOString() || 'unknown'
                     }));
 
@@ -550,7 +641,8 @@ Returns: Array of {name, path, isDirectory, size, modifiedTime}`,
                         }]
                     };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_list_files');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -579,53 +671,63 @@ Max size: Configurable in Settings (default: 1MB)`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
+                    const result = await this.executeWithSftp(session.tab, 'sftp_read_file', async (sftp) => {
+                        const stats = await sftp.stat(params.path);
+                        const maxSize = params.maxSize || this.config.store.mcp?.sftp?.maxFileSize || 1024 * 1024;
 
-                    const stats = await sftp.stat(params.path);
-                    const maxSize = params.maxSize || this.config.store.mcp?.sftp?.maxFileSize || 1024 * 1024;
+                        if (stats.size > maxSize) {
+                            return {
+                                tooLarge: true,
+                                statsSize: stats.size,
+                                maxSize
+                            };
+                        }
 
-                    if (stats.size > maxSize) {
+                        const handle = await sftp.open(params.path, 1); // OPEN_READ
+                        const chunks: Uint8Array[] = [];
+                        try {
+                            while (true) {
+                                const chunk = await handle.read();
+                                if (!chunk || chunk.length === 0) break;
+                                chunks.push(chunk);
+                            }
+                        } finally {
+                            await handle.close();
+                        }
+
+                        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                        const combined = new Uint8Array(totalLength);
+                        let offset = 0;
+                        for (const chunk of chunks) {
+                            combined.set(chunk, offset);
+                            offset += chunk.length;
+                        }
+                        const content = new TextDecoder('utf-8').decode(combined);
+                        return { tooLarge: false, content, size: stats.size };
+                    });
+
+                    if (result.tooLarge) {
                         return {
                             content: [{
                                 type: 'text', text: JSON.stringify({
                                     success: false,
-                                    error: `File too large: ${stats.size} bytes (max: ${maxSize})`,
+                                    error: `File too large: ${result.statsSize} bytes (max: ${result.maxSize})`,
                                     hint: 'Use sftp_download to download the file locally'
                                 })
                             }]
                         };
                     }
 
-                    const handle = await sftp.open(params.path, 1); // OPEN_READ
-                    const chunks: Uint8Array[] = [];
-                    while (true) {
-                        const chunk = await handle.read();
-                        if (!chunk || chunk.length === 0) break;
-                        chunks.push(chunk);
-                    }
-                    await handle.close();
-
-                    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-                    const combined = new Uint8Array(totalLength);
-                    let offset = 0;
-                    for (const chunk of chunks) {
-                        combined.set(chunk, offset);
-                        offset += chunk.length;
-                    }
-                    const content = new TextDecoder('utf-8').decode(combined);
-
                     return {
                         content: [{
                             type: 'text', text: JSON.stringify({
-                                success: true, sessionId: session.sessionId, path: params.path, size: stats.size, content
+                                success: true, sessionId: session.sessionId, path: params.path, size: result.size, content: result.content
                             })
                         }]
                     };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_read_file');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -656,16 +758,17 @@ For text content only. Use sftp_upload for binary files.`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
                     const flags = params.append ? (2 | 8 | 4) : (2 | 8 | 16);
-                    const handle = await sftp.open(params.path, flags);
                     const data = new TextEncoder().encode(params.content);
-                    await handle.write(data);
-                    await handle.close();
+
+                    await this.executeWithSftp(session.tab, 'sftp_write_file', async (sftp) => {
+                        const handle = await sftp.open(params.path, flags);
+                        try {
+                            await handle.write(data);
+                        } finally {
+                            await handle.close();
+                        }
+                    });
 
                     this.logger.info(`[sftp_write_file] Success: ${data.length} bytes written to ${params.path}`);
 
@@ -677,7 +780,8 @@ For text content only. Use sftp_upload for binary files.`,
                         }]
                     };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_write_file');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -702,15 +806,11 @@ For text content only. Use sftp_upload for binary files.`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
-                    await sftp.mkdir(params.path);
+                    await this.executeWithSftp(session.tab, 'sftp_mkdir', sftp => sftp.mkdir(params.path));
                     return { content: [{ type: 'text', text: JSON.stringify({ success: true, sessionId: session.sessionId, path: params.path }) }] };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_mkdir');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -738,24 +838,26 @@ For text content only. Use sftp_upload for binary files.`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
                     let isDir = params.isDirectory;
-                    if (isDir === undefined) {
-                        try {
-                            const stats = await sftp.stat(params.path);
-                            isDir = stats.isDirectory;
-                        } catch { isDir = false; }
-                    }
+                    await this.executeWithSftp(session.tab, 'sftp_delete', async (sftp) => {
+                        if (isDir === undefined) {
+                            try {
+                                const stats = await sftp.stat(params.path);
+                                isDir = stats.isDirectory;
+                            } catch { isDir = false; }
+                        }
 
-                    if (isDir) {
-                        await sftp.rmdir(params.path);
-                    } else {
-                        await sftp.unlink(params.path);
-                    }
+                        if (isDir) {
+                            await sftp.rmdir(params.path);
+                        } else {
+                            try {
+                                await sftp.unlink(params.path);
+                            } catch (unlinkError: any) {
+                                // Try rmdir if unlink fails
+                                await sftp.rmdir(params.path);
+                            }
+                        }
+                    });
 
                     return {
                         content: [{
@@ -765,7 +867,8 @@ For text content only. Use sftp_upload for binary files.`,
                         }]
                     };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_delete');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -791,12 +894,7 @@ For text content only. Use sftp_upload for binary files.`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
-                    await sftp.rename(params.sourcePath, params.destPath);
+                    await this.executeWithSftp(session.tab, 'sftp_rename', sftp => sftp.rename(params.sourcePath, params.destPath));
                     return {
                         content: [{
                             type: 'text', text: JSON.stringify({
@@ -805,7 +903,8 @@ For text content only. Use sftp_upload for binary files.`,
                         }]
                     };
                 } catch (error: any) {
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message || String(error) }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_rename');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -830,12 +929,7 @@ For text content only. Use sftp_upload for binary files.`,
                 }
 
                 try {
-                    const sftp = await this.getSFTPSession(session.tab);
-                    if (!sftp) {
-                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Could not open SFTP session' }) }] };
-                    }
-
-                    const stats = await sftp.stat(params.path);
+                    const stats = await this.executeWithSftp<any>(session.tab, 'sftp_stat', sftp => sftp.stat(params.path));
                     return {
                         content: [{
                             type: 'text', text: JSON.stringify({
@@ -856,7 +950,8 @@ For text content only. Use sftp_upload for binary files.`,
                             }]
                         };
                     }
-                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: errorStr }) }] };
+                    const formatted = this.formatSftpError(error, 'sftp_stat');
+                    return { content: [{ type: 'text', text: JSON.stringify({ success: false, ...formatted }) }] };
                 }
             }
         };
@@ -1001,6 +1096,9 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                         if (!this.isTransferCancelled(task)) {
                             task.status = 'failed';
                             task.error = error.message || String(error);
+                            if (this.isChannelFailureError(error)) {
+                                this.invalidateSFTPSession((session.tab as any).sshSession);
+                            }
                         }
                         task.endTime = Date.now();
                         this.emitTransferUpdate();
@@ -1028,10 +1126,11 @@ Max upload size is configurable in Tabby Settings → MCP → SFTP.`,
                             }]
                         };
                     } catch (error: any) {
+                        const formatted = this.formatSftpError(error, 'sftp_upload');
                         return {
                             content: [{
                                 type: 'text', text: JSON.stringify({
-                                    success: false, transferId, error: error.message || String(error)
+                                    success: false, transferId, ...formatted
                                 })
                             }]
                         };
@@ -1212,6 +1311,9 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                             if (!this.isTransferCancelled(task)) {
                                 task.status = 'failed';
                                 task.error = error.message || String(error);
+                                if (this.isChannelFailureError(error)) {
+                                    this.invalidateSFTPSession((session.tab as any).sshSession);
+                                }
                             }
                             task.endTime = Date.now();
                             this.emitTransferUpdate();
@@ -1224,19 +1326,30 @@ Max download size is configurable in Tabby Settings → MCP → SFTP.`,
                     };
 
                     if (sync) {
-                        await doDownload();
-                        return {
-                            content: [{
-                                type: 'text', text: JSON.stringify({
-                                    success: true,
-                                    transferId,
-                                    remotePath: params.remotePath,
-                                    localPath: params.localPath,
-                                    bytesTransferred: task.bytesTransferred,
-                                    duration: task.endTime! - task.startTime
-                                })
-                            }]
-                        };
+                        try {
+                            await doDownload();
+                            return {
+                                content: [{
+                                    type: 'text', text: JSON.stringify({
+                                        success: true,
+                                        transferId,
+                                        remotePath: params.remotePath,
+                                        localPath: params.localPath,
+                                        bytesTransferred: task.bytesTransferred,
+                                        duration: task.endTime! - task.startTime
+                                    })
+                                }]
+                            };
+                        } catch (error: any) {
+                            const formatted = this.formatSftpError(error, 'sftp_download');
+                            return {
+                                content: [{
+                                    type: 'text', text: JSON.stringify({
+                                        success: false, transferId, ...formatted
+                                    })
+                                }]
+                            };
+                        }
                     } else {
                         doDownload().catch(e => {
                             if (!this.isTransferCancelled(task)) {

@@ -14,7 +14,7 @@
 
 **Tabby 终端的全功能 MCP 服务器插件**
 
-*将 AI 助手连接到您的终端 — 36 个 MCP 工具，包含 SFTP 支持*
+*将 AI 助手连接到您的终端 — 37 个 MCP 工具，包含 SFTP 支持*
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -199,7 +199,7 @@ npm run build
 
 ## 🛠️ 可用工具
 
-### 终端控制（9 个）
+### 终端控制（10 个）
 
 | 工具 | 说明 |
 |------|------|
@@ -207,6 +207,7 @@ npm run build
 | `exec_command` | 执行命令（支持多种定位方式） |
 | `send_input` | 发送交互式输入 (Ctrl+C 等) |
 | `submit_keyboard_interactive_response` | 提交 MFA、密码或其他 SSH 键盘交互式认证响应 |
+| `reconnect_session` | 重新连接已断开或已关闭的终端会话 |
 | `get_terminal_buffer` | 读取终端缓冲区（默认使用活跃会话） |
 | `abort_command` | 中止正在运行的命令 |
 | `get_command_status` | 监控活动命令状态 |
@@ -339,7 +340,7 @@ npm run build
 
 | 特性 | 原项目 | 本项目 |
 |------|--------|--------|
-| MCP 工具 | 4 | **36** |
+| MCP 工具 | 4 | **37** |
 | 标签页管理 | ❌ | ✅ |
 | 配置文件/SSH | ❌ | ✅ |
 | SFTP 支持 | ❌ | ✅ |
@@ -351,6 +352,15 @@ npm run build
 ---
 
 ## 📝 更新日志
+
+### v1.7.3-rc.1 (2026-10-31) — 预发布
+
+> ⚠️ **预发布版本，仅发布在 GitHub，未发布至 npm。**
+
+- **SFTP 闲置断线自动恢复** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14))：遇到通道错误或健康检查异常时，同时失效 MCP 缓存和 Tabby 底层 `sshSession.sftp` 单例实例。在过夜闲置的堡垒机连接上，`sftp_*` 操作会自动通过新建子系统通道重试自愈，不再抛出 `SSH_FX_FAILURE`。
+- **SSH 断线重连处理（“按任意键重新连接”）**：当 SSH 会话关闭时，调用 `send_input` 会主动触发 Tabby 原生 `reconnect()` 实现真实的按键重连；`exec_command` 在命令发送前自动尝试重连拉活会话。
+- **`reconnect_session` 工具**：显式重连断开或已关闭的终端会话。工具总数增至 37 个。
+- **会话状态感知**：`get_session_list` 现已支持报告 `isSessionClosed`、`reconnectOffered` 和 `canReconnect`。
 
 ### v1.7.2 (2026-10-10)
 
