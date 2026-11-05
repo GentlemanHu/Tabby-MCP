@@ -85,7 +85,7 @@
 </div>
 
 
-> **Safety model (v1.7.2):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
+> **Safety model (v1.7.3):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
 
 ---
 
@@ -391,9 +391,9 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 
 ## 📝 Changelog
 
-### v1.7.3-rc.1 (2026-10-31) — prerelease
+### v1.7.3 (2026-11-05)
 
-> ⚠️ **Prerelease, published to GitHub only (not on npm).**
+Published to [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.7.3) and npm (`tabby-mcp-server@1.7.3`).
 
 - **SFTP idle auto-recovery** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)): Invalidate both MCP cache and Tabby's underlying single-instance `sshSession.sftp` wrapper on channel errors or health-check timeouts. SFTP operations on long-idle bastion connections now auto-recover with a fresh channel retry instead of dying with `SSH_FX_FAILURE`.
 - **SSH disconnected session handling ("Press any key to reconnect")**: When an SSH session closes, `send_input` triggers Tabby's native `reconnect()` to fulfill the reconnect prompt. `exec_command` attempts automatic reconnection before executing.

@@ -2,9 +2,9 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
-## [1.7.3-rc.1] - 2026-10-31
+## [1.7.3] - 2026-11-05
 
-> ⚠️ **Prerelease.** Published to GitHub only, not to npm.
+Stable release. Verified in real-world bastion environments ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)). Published to GitHub and npm.
 
 ### 🐛 Fixed
 - **SFTP idle session auto-recovery** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)): Invalidate both MCP cache and Tabby's internal `sshSession.sftp` wrapper when an SFTP channel drops or fails health checks. When long-idle bastions return `SSH_FX_FAILURE` (General failure), all SFTP operations now automatically self-heal by opening a fresh channel and retrying once. If auto-recovery fails, actionable guidance is returned.

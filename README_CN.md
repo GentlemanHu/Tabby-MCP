@@ -85,7 +85,7 @@
 </div>
 
 
-> **v1.7.2 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。服务器默认绑定 `127.0.0.1`，可在设置里改监听地址。Host 和 Origin 仍然拒绝域名。直连工具 API 默认关闭。
+> **v1.7.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。服务器默认绑定 `127.0.0.1`，可在设置里改监听地址。Host 和 Origin 仍然拒绝域名。直连工具 API 默认关闭。
 
 ---
 
@@ -353,9 +353,9 @@ npm run build
 
 ## 📝 更新日志
 
-### v1.7.3-rc.1 (2026-10-31) — 预发布
+### v1.7.3 (2026-11-05)
 
-> ⚠️ **预发布版本，仅发布在 GitHub，未发布至 npm。**
+同时发布到 [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.7.3) 和 npm（`tabby-mcp-server@1.7.3`）。已在真实堡垒机长连接闲置环境下实机验证（Fixes #14）。
 
 - **SFTP 闲置断线自动恢复** ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14))：遇到通道错误或健康检查异常时，同时失效 MCP 缓存和 Tabby 底层 `sshSession.sftp` 单例实例。在过夜闲置的堡垒机连接上，`sftp_*` 操作会自动通过新建子系统通道重试自愈，不再抛出 `SSH_FX_FAILURE`。
 - **SSH 断线重连处理（“按任意键重新连接”）**：当 SSH 会话关闭时，调用 `send_input` 会主动触发 Tabby 原生 `reconnect()` 实现真实的按键重连；`exec_command` 在命令发送前自动尝试重连拉活会话。
