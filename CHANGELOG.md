@@ -2,6 +2,10 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## Unreleased
+
+- Added API key authentication for MCP HTTP transports, with one-time key display, multi-key management, revocation, and mandatory authentication for non-loopback binds.
+
 ## [1.7.3] - 2026-11-05
 
 Stable release. Verified in real-world bastion environments ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)). Published to GitHub and npm.

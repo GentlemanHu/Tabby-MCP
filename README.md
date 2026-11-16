@@ -87,6 +87,8 @@
 
 > **Safety model (v1.7.3):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
 
+API key authentication is optional on `127.0.0.1` and is mandatory for `0.0.0.0` or another non-loopback bind address. Keys are generated once, displayed once, and stored as SHA-256 hashes. Configure clients with `Authorization: Bearer <key>`.
+
 ---
 
 ## 📦 Installation

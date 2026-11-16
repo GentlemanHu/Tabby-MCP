@@ -74,6 +74,33 @@ import { PLUGIN_VERSION } from '../version';
         <small class="form-text text-muted">{{ t('mcp.config.bindAddress.desc') }}</small>
         <small class="form-text text-warning" *ngIf="isWideBind()">{{ t('mcp.config.bindAddress.warn') }}</small>
       </div>
+      <div class="form-group">
+        <label>{{ t('mcp.auth.title') }}</label>
+        <div class="checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="config.store.mcp.authentication.enabled" (change)="saveConfig()">
+            {{ t('mcp.auth.require') }}
+          </label>
+        </div>
+        <div class="input-group mt-2">
+          <input class="form-control" [(ngModel)]="newApiKeyName" [placeholder]="t('mcp.auth.keyName')">
+          <button class="btn btn-primary" type="button" (click)="createApiKey()">{{ t('mcp.auth.create') }}</button>
+        </div>
+        <div class="alert alert-warning mt-2" *ngIf="newApiKeySecret">
+          <strong>{{ t('mcp.auth.created') }}</strong><br>
+          <code>{{ newApiKeySecret }}</code>
+          <div class="button-group mt-2">
+            <button class="btn btn-sm btn-primary" type="button" (click)="copyApiKey()">{{ t('mcp.auth.copyKey') }}</button>
+            <button class="btn btn-sm btn-outline-primary" type="button" (click)="copyAuthenticatedConfig()">{{ t('mcp.auth.copyConfig') }}</button>
+            <button class="btn btn-sm btn-secondary" type="button" (click)="clearNewApiKey()">{{ t('mcp.auth.saved') }}</button>
+          </div>
+          <small class="d-block mt-2">{{ t('mcp.auth.oneTimeHint') }}</small>
+        </div>
+        <div *ngFor="let key of apiKeys" class="mt-2">
+          <code>{{ key.keyPrefix }}...</code> {{ key.name }}
+          <button class="btn btn-sm btn-outline-danger ml-2" type="button" (click)="revokeApiKey(key.id)" *ngIf="!key.revokedAt">{{ t('mcp.auth.revoke') }}</button>
+        </div>
+      </div>
       <div class="update-banner" *ngIf="updateAvailable">
         <div>
           <strong>{{ t('mcp.update.available', {version: latestVersion}) }}</strong>
@@ -393,9 +420,9 @@ import { PLUGIN_VERSION } from '../version';
       <hr />
       <h4>🔗 {{ t('mcp.connectionInfo.title') }}</h4>
       <div class="connection-info">
-        <p><strong>{{ t('mcp.connectionInfo.streamable') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/mcp</code></p>
-        <p><strong>{{ t('mcp.connectionInfo.legacySse') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/sse</code></p>
-        <p><strong>{{ t('mcp.connectionInfo.healthCheck') }}</strong> <code>http://127.0.0.1:{{ config.store.mcp.port }}/health</code></p>
+        <p><strong>{{ t('mcp.connectionInfo.streamable') }}</strong> <code>{{ getMcpUrl() }}</code></p>
+        <p><strong>{{ t('mcp.connectionInfo.legacySse') }}</strong> <code>{{ getSseUrl() }}</code></p>
+        <p><strong>{{ t('mcp.connectionInfo.healthCheck') }}</strong> <code>{{ getHealthUrl() }}</code></p>
         <div class="mt-3">
           <p class="text-muted">{{ t('mcp.connectionInfo.addToClient') }}</p>
           <pre class="config-example">{{getConfigExample()}}</pre>
@@ -813,10 +840,13 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   private lastSftpEnabled = true;
   private lastPort = 3001;
   private lastBindAddress = '127.0.0.1';
+  newApiKeyName = '';
+  newApiKeySecret = '';
+  apiKeys = this.getActiveApiKeys();
 
   constructor(
     public config: ConfigService,
-    private mcpService: McpService,
+    public mcpService: McpService,
     private logger: McpLoggerService,
     private i18n: McpI18nService,
     private hostApp: HostAppService,
@@ -825,6 +855,29 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     private sftpTools: SFTPToolCategory,
     private pluginUpdate: PluginUpdateService
   ) { }
+
+  async createApiKey(): Promise<void> {
+    this.newApiKeySecret = await this.mcpService.createApiKey(this.newApiKeyName);
+    this.apiKeys = this.getActiveApiKeys();
+    this.newApiKeyName = '';
+  }
+
+  async revokeApiKey(id: string): Promise<void> {
+    const confirmed = await this.dialogService.showOperationConfirmation(
+      this.t('mcp.auth.revoke'),
+      this.t('mcp.auth.revokeTarget'),
+      this.t('mcp.auth.revokeConfirm')
+    );
+    if (!confirmed) {
+      return;
+    }
+    await this.mcpService.revokeApiKey(id);
+    this.apiKeys = this.getActiveApiKeys();
+  }
+
+  private getActiveApiKeys(): ReturnType<McpService['listApiKeys']> {
+    return this.mcpService.listApiKeys().filter(key => !key.revokedAt);
+  }
 
   ngOnInit(): void {
     // Ensure timing config exists
@@ -868,6 +921,9 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
         useEnhancedHeuristics: true,
         mode: 'heuristic'
       };
+    }
+    if (!this.config.store.mcp.authentication) {
+      this.config.store.mcp.authentication = { enabled: false, apiKeys: [] };
     }
     // Ensure new fields exist on existing config
     if (this.config.store.mcp.sftp.maxUploadSize === undefined) {
@@ -1097,22 +1153,46 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
 
   // ============== Config example ==============
 
-  getConfigExample(): string {
+  getConfigExample(apiKey = ''): string {
     const port = this.config.store.mcp?.port || 3001;
     return JSON.stringify({
       mcpServers: {
         'Tabby MCP': {
           type: 'streamable_http',
-          url: `http://${this.mcpService.getAdvertisedHost()}:${port}/mcp`
+          url: this.getMcpUrl(),
+          ...(this.isAuthenticationRequired() ? { headers: { Authorization: `Bearer ${apiKey || '<paste your API key here>'}` } } : {})
         }
       }
     }, null, 2);
   }
 
   copyConfig(): void {
-    navigator.clipboard.writeText(this.getConfigExample());
+    void this.copyText(this.getConfigExample());
     this.logger.info('Config copied to clipboard');
   }
+
+  async copyApiKey(): Promise<void> {
+    if (this.newApiKeySecret) {
+      await this.copyText(this.newApiKeySecret);
+      this.logger.info('API key copied to clipboard');
+    }
+  }
+
+  copyAuthenticatedConfig(): void {
+    void this.copyText(this.getConfigExample(this.newApiKeySecret));
+  }
+
+  clearNewApiKey(): void {
+    this.newApiKeySecret = '';
+  }
+
+  getMcpUrl(): string { return `http://${this.mcpService.getAdvertisedHost()}:${this.config.store.mcp?.port || 3001}/mcp`; }
+  isAuthenticationRequired(): boolean {
+    return this.isWideBind() || this.config.store.mcp?.authentication?.enabled === true;
+  }
+  getSseUrl(): string { return `http://${this.mcpService.getAdvertisedHost()}:${this.config.store.mcp?.port || 3001}/sse`; }
+  getHealthUrl(): string { return `http://${this.mcpService.getAdvertisedHost()}:${this.config.store.mcp?.port || 3001}/health`; }
+  async copyText(value: string): Promise<void> { if (value) await navigator.clipboard.writeText(value); }
 
   // ============== Connection Monitor ==============
 
