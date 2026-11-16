@@ -55,6 +55,10 @@ export class McpConfigProvider extends ConfigProvider {
                 enabled: false,              // Default off: detection is optional and should not confuse clients unless explicitly enabled
                 useEnhancedHeuristics: true, // Normalize ANSI/control sequences and scan recent prompt lines
                 mode: 'heuristic'            // heuristic = passive buffer analysis, active = add low-risk probing for shell sessions
+            },
+            authentication: {
+                enabled: false,
+                apiKeys: []
             }
         }
     };

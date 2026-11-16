@@ -6,11 +6,13 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { IncomingMessage, ServerResponse } from 'http';
 import * as http from 'http';
+import * as os from 'os';
 import { Socket } from 'net';
 import { McpLoggerService } from './mcpLogger.service';
-import { ToolCategory, McpTool } from '../types/types';
+import { McpApiKey, ToolCategory, McpTool } from '../types/types';
 import { randomUUID } from 'crypto';
 import { PLUGIN_VERSION } from '../version';
+import { generateMcpApiKey, matchesMcpApiKey } from './mcpAuthentication.service';
 
 /**
  * MCP Server Service - Core MCP server with Streamable HTTP and SSE transport
@@ -163,6 +165,16 @@ export class McpService {
         this.app.use(express.json());
         this.app.use((req, res, next) => {
             if (this.checkHost(req, res)) {
+                next();
+            }
+        });
+
+        this.app.use((req, res, next) => {
+            if (req.path === '/health' || req.path === '/internal/shutdown') {
+                next();
+                return;
+            }
+            if (this.authenticateRequest(req, res)) {
                 next();
             }
         });
@@ -487,6 +499,54 @@ export class McpService {
 
     }
 
+    public async createApiKey(name: string): Promise<string> {
+        const generated = generateMcpApiKey(name);
+        const authentication = this.getAuthenticationConfig();
+        authentication.apiKeys.push(generated.record);
+        await this.config.save();
+        return generated.secret;
+    }
+
+    public async revokeApiKey(id: string): Promise<void> {
+        const key = this.getAuthenticationConfig().apiKeys.find(item => item.id === id);
+        if (key && !key.revokedAt) {
+            key.revokedAt = new Date().toISOString();
+            await this.config.save();
+        }
+    }
+
+    public listApiKeys(): McpApiKey[] {
+        return this.getAuthenticationConfig().apiKeys.map(key => ({ ...key }));
+    }
+
+    private getAuthenticationConfig(): { enabled: boolean; apiKeys: McpApiKey[] } {
+        const mcp = this.config.store.mcp as any;
+        if (!mcp.authentication) {
+            mcp.authentication = { enabled: false, apiKeys: [] };
+        }
+        if (!Array.isArray(mcp.authentication.apiKeys)) {
+            mcp.authentication.apiKeys = [];
+        }
+        return mcp.authentication;
+    }
+
+    private authenticateRequest(req: Request, res: Response): boolean {
+        const authentication = this.getAuthenticationConfig();
+        const wideBind = this.getBindAddress() !== '127.0.0.1';
+        if (!authentication.enabled && !wideBind) {
+            return true;
+        }
+        const header = req.headers.authorization;
+        const secret = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+        const key = authentication.apiKeys.find(item => !item.revokedAt && matchesMcpApiKey(secret, item.keyHash));
+        if (!key) {
+            res.status(401).json({ error: 'Authentication required' });
+            return false;
+        }
+        key.lastUsedAt = new Date().toISOString();
+        return true;
+    }
+
     /**
      * Shared Origin validation for all MCP endpoints (DNS rebinding protection).
      * Requests without an Origin header (curl, local CLI bridges) are allowed.
@@ -519,7 +579,35 @@ export class McpService {
     /** Address clients on this machine should use in the MCP URL. */
     public getAdvertisedHost(): string {
         const bindAddress = this.getBindAddress();
-        return bindAddress === '0.0.0.0' ? '127.0.0.1' : bindAddress;
+        if (bindAddress !== '0.0.0.0') {
+            return bindAddress;
+        }
+
+        const addresses = Object.values(os.networkInterfaces())
+            .flatMap(items => items || [])
+            .filter(item => item.family === 'IPv4' && !item.internal)
+            .map(item => item.address);
+        const preferredAddress = addresses.find(address => this.getIpv4Priority(address) === 1)
+            || addresses.find(address => this.getIpv4Priority(address) === 2)
+            || addresses.find(address => this.getIpv4Priority(address) === 3);
+        return preferredAddress || addresses[0] || '127.0.0.1';
+    }
+
+    private getIpv4Priority(address: string): number {
+        const parts = address.split('.').map(Number);
+        if (parts.length !== 4) {
+            return 0;
+        }
+        if (parts[0] === 192 && parts[1] === 168) {
+            return 1;
+        }
+        if (parts[0] === 10) {
+            return 2;
+        }
+        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
+            return 3;
+        }
+        return 0;
     }
 
     private isAllowedHostname(hostname: string): boolean {
@@ -817,7 +905,7 @@ export class McpService {
     private async isStaleMcpInstance(serverPort: number): Promise<boolean> {
         return new Promise((resolve) => {
             const req = http.get({
-                host: this.getAdvertisedHost(),
+                host: '127.0.0.1',
                 port: serverPort,
                 path: '/health',
                 timeout: 1000
@@ -848,7 +936,7 @@ export class McpService {
 
         return new Promise((resolve) => {
             const req = http.request({
-                host: this.getAdvertisedHost(),
+                host: '127.0.0.1',
                 port: serverPort,
                 path: '/internal/shutdown',
                 method: 'POST',
