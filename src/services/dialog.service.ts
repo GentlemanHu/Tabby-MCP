@@ -1,5 +1,5 @@
 import { Injectable, OnDestroy } from '@angular/core';
-import { HostAppService, HostWindowService, Platform } from 'tabby-core';
+import { ConfigService, HostAppService, HostWindowService, Platform } from 'tabby-core';
 import { Subscription } from 'rxjs';
 import { McpLoggerService } from './mcpLogger.service';
 import { McpI18nService } from './i18n.service';
@@ -32,7 +32,8 @@ export class DialogService implements OnDestroy {
         private logger: McpLoggerService,
         private i18n: McpI18nService,
         private hostApp: HostAppService,
-        private hostWindow: HostWindowService
+        private hostWindow: HostWindowService,
+        private config: ConfigService
     ) { }
 
     ngOnDestroy(): void {
@@ -173,8 +174,9 @@ export class DialogService implements OnDestroy {
                     } catch {
                         // Element may be gone - nothing to restore
                     }
+                    // Restore focus before the next queued dialog claims it.
+                    resolve(result);
                 }, 0);
-                resolve(result);
             };
 
             const autoRejectTimer = setTimeout(() => finish(false), this.AUTO_REJECT_MS);
@@ -183,7 +185,6 @@ export class DialogService implements OnDestroy {
                 if (event.key === 'Escape') {
                     event.preventDefault();
                     event.stopPropagation();
-                    finish(false);
                 }
             };
 
@@ -191,7 +192,8 @@ export class DialogService implements OnDestroy {
             approveBtn.addEventListener('click', () => finish(true));
             overlay.addEventListener('mousedown', (event) => {
                 if (event.target === overlay) {
-                    finish(false);
+                    // Keep keyboard focus on the explicit approval controls.
+                    event.preventDefault();
                 }
             });
             document.addEventListener('keydown', onKeyDown, true);
@@ -202,7 +204,23 @@ export class DialogService implements OnDestroy {
             // Native confirm() bounced the Dock / flashed the taskbar. The DOM overlay
             // does not, so request OS attention without going back to a blocking dialog.
             this.requestOsAttention();
+            this.playConfirmationSound();
         });
+    }
+
+    /** Play the system alert once when an enabled desktop dialog is shown. */
+    private playConfirmationSound(): void {
+        if (this.hostApp.platform === Platform.Web ||
+            this.config.store?.mcp?.pairProgrammingMode?.confirmationSound !== true) {
+            return;
+        }
+
+        try {
+            const { shell } = require('electron');
+            shell.beep();
+        } catch (error) {
+            this.logger.debug('Could not play confirmation sound:', error);
+        }
     }
 
     /**

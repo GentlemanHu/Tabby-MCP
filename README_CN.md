@@ -286,12 +286,15 @@ npm run build
 | 监听地址 | 绑定地址。`0.0.0.0` 监听所有网卡，供 WSL 使用；域名仍然会被拒绝 | 127.0.0.1 |
 | 启动时运行 | 自动启动服务器 | true |
 | 结对编程模式 | 确认命令、原始输入和敏感 SFTP 操作 | true |
+| 确认提示音 | 桌面版 Tabby 显示确认对话框时播放系统提示音 | false |
 | SFTP 操作确认 | 将确认对话框应用于敏感 SFTP 操作（`send_input` 始终遵循命令确认设置） | true |
 | 会话跟踪 | 使用稳定 UUID | true |
 | 后台执行 | 无需聚焦执行 | false |
 | SFTP 启用 | 启用 SFTP 工具 | true |
 | 环境探测 | 暴露 `get_session_environment` | false |
 | 直连工具 API | 启用兼容端点 `/api/tool/:name`（仅支持手动配置） | false |
+
+点击「批准」或「拒绝」即可处理确认请求。点击遮罩或按 Escape 后，对话框会继续等待选择，两分钟后自动拒绝。
 
 ---
 

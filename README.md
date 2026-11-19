@@ -324,12 +324,15 @@ For clients that don't support SSE, use the STDIO bridge:
 | Listen address | Bind address. `0.0.0.0` exposes every interface for WSL; DNS hostnames stay rejected | 127.0.0.1 |
 | Start on Boot | Auto-start server | true |
 | Pair Programming | Confirm commands, raw input, and sensitive SFTP operations | true |
+| Confirmation sound | Play the system alert when a confirmation dialog appears in desktop Tabby | false |
 | Confirm SFTP Operations | Apply the approval dialog to sensitive SFTP operations (`send_input` always follows command confirmation) | true |
 | Session Tracking | Use stable UUIDs | true |
 | Background Execution | Run without focus | false |
 | SFTP Enabled | Enable SFTP tools | true |
 | Environment Detection | Expose `get_session_environment` | false |
 | Direct Tool API | Enable compatibility endpoint `/api/tool/:name` (manual config only) | false |
+
+Click **Approve** or **Reject** to resolve an approval prompt. Clicking the backdrop or pressing Escape keeps it open until you choose or the two-minute timeout expires.
 
 ---
 

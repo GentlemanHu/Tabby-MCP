@@ -2,9 +2,14 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
-## Unreleased
+## [Unreleased]
 
-- Added API key authentication for MCP HTTP transports, with one-time key display, multi-key management, revocation, and mandatory authentication for non-loopback binds.
+### Added
+- API key authentication for MCP HTTP transports, with one-time key display, multi-key management, revocation, and mandatory authentication for non-loopback binds.
+- Optional system alert sound for desktop confirmation prompts under **Settings → MCP → Pair Programming Mode**, off by default.
+
+### Fixed
+- Keep confirmation prompts open when clicking the backdrop or pressing Escape. Explicit approval, rejection, and the two-minute timeout resolve the prompt.
 
 ## [1.7.3] - 2026-11-05
 

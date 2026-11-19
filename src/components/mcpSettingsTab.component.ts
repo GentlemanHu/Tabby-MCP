@@ -169,6 +169,14 @@ import { PLUGIN_VERSION } from '../version';
       <div class="form-group" *ngIf="config.store.mcp.pairProgrammingMode.enabled && config.store.mcp.pairProgrammingMode.showConfirmationDialog">
         <div class="checkbox">
           <label>
+            <input type="checkbox" [(ngModel)]="config.store.mcp.pairProgrammingMode.confirmationSound" (change)="saveConfig()">
+            {{ t('mcp.pairProgramming.confirmationSound') }}
+          </label>
+        </div>
+      </div>
+      <div class="form-group" *ngIf="config.store.mcp.pairProgrammingMode.enabled && config.store.mcp.pairProgrammingMode.showConfirmationDialog">
+        <div class="checkbox">
+          <label>
             <input type="checkbox" [(ngModel)]="config.store.mcp.pairProgrammingMode.confirmFileOperations" (change)="saveConfig()">
             {{ t('mcp.pairProgramming.confirmFileOps') }}
           </label>
