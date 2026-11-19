@@ -17,6 +17,7 @@ export class McpConfigProvider extends ConfigProvider {
             pairProgrammingMode: {
                 enabled: true,
                 showConfirmationDialog: true,
+                confirmationSound: false,
                 confirmFileOperations: true, // Require approval for sensitive SFTP operations
                 autoFocusTerminal: true
             },

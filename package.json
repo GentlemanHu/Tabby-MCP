@@ -40,7 +40,8 @@
   ],
   "author": "GentlemanHu <justfeelingme@gmail.com>",
   "contributors": [
-    "AI Assistant (Claude/Gemini)"
+    "AI Assistant (Claude/Gemini)",
+    "bytepoem"
   ],
   "license": "MIT",
   "peerDependencies": {

@@ -2,6 +2,14 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- Keep confirmation prompts open when clicking the backdrop or pressing Escape. Explicit approval, rejection, and the two-minute timeout resolve the prompt.
+
+### Added
+- Optional system alert sound for desktop confirmation prompts under **Settings → MCP → Pair Programming Mode**, off by default.
+
 ## [1.7.3] - 2026-11-05
 
 Stable release. Verified in real-world bastion environments ([Issue #14](https://github.com/GentlemanHu/Tabby-MCP/issues/14)). Published to GitHub and npm.

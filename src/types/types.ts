@@ -66,6 +66,7 @@ export interface McpConfig {
     pairProgrammingMode: {
         enabled: boolean;
         showConfirmationDialog: boolean;
+        confirmationSound: boolean;
         // Gate sensitive SFTP operations; send_input follows showConfirmationDialog
         confirmFileOperations: boolean;
         autoFocusTerminal: boolean;
