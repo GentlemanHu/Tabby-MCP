@@ -100,9 +100,23 @@ export interface McpConfig {
         useEnhancedHeuristics: boolean;
         mode: 'heuristic' | 'active';
     };
+    authentication: {
+        enabled: boolean;
+        apiKeys: McpApiKey[];
+    };
     useStreamCapture?: boolean; // Experimental mode to fix output truncation
     /** Internal loopback handover secret; generated lazily and never exposed by MCP endpoints */
     serverControlToken?: string;
+}
+
+export interface McpApiKey {
+    id: string;
+    name: string;
+    keyHash: string;
+    keyPrefix: string;
+    createdAt: string;
+    lastUsedAt?: string;
+    revokedAt?: string;
 }
 
 /**
