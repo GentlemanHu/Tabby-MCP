@@ -30,6 +30,8 @@ export class McpService {
     private streamableTransports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
     private app!: express.Application;
     private httpServer?: http.Server;
+    /** Address the running server is actually bound to (may differ from config until restart) */
+    private activeBindAddress?: string;
     private sockets = new Set<Socket>();
     private isRunning = false;
     private startPromise?: Promise<void>;
@@ -532,7 +534,10 @@ export class McpService {
 
     private authenticateRequest(req: Request, res: Response): boolean {
         const authentication = this.getAuthenticationConfig();
-        const wideBind = this.getBindAddress() !== '127.0.0.1';
+        // Require a key if either the configured or the currently bound address is non-loopback,
+        // so changing the setting without restarting never drops authentication early.
+        const wideBind = this.getBindAddress() !== '127.0.0.1'
+            || (this.activeBindAddress !== undefined && this.activeBindAddress !== '127.0.0.1');
         if (!authentication.enabled && !wideBind) {
             return true;
         }
@@ -591,6 +596,15 @@ export class McpService {
             || addresses.find(address => this.getIpv4Priority(address) === 2)
             || addresses.find(address => this.getIpv4Priority(address) === 3);
         return preferredAddress || addresses[0] || '127.0.0.1';
+    }
+
+    /**
+     * Same-host address for probing/handing over a previous instance on the configured port.
+     * A specific bind address is not reachable via 127.0.0.1, so probe that address instead.
+     */
+    private getLocalProbeHost(): string {
+        const bindAddress = this.getBindAddress();
+        return bindAddress === '0.0.0.0' ? '127.0.0.1' : bindAddress;
     }
 
     private getIpv4Priority(address: string): number {
@@ -888,6 +902,7 @@ export class McpService {
 
                 settled = true;
                 this.httpServer = server;
+                this.activeBindAddress = bindAddress;
                 this.isRunning = true;
                 const advertised = this.getAdvertisedHost();
                 this.logger.info(`MCP server started on ${bindAddress}:${serverPort}`);
@@ -905,7 +920,7 @@ export class McpService {
     private async isStaleMcpInstance(serverPort: number): Promise<boolean> {
         return new Promise((resolve) => {
             const req = http.get({
-                host: '127.0.0.1',
+                host: this.getLocalProbeHost(),
                 port: serverPort,
                 path: '/health',
                 timeout: 1000
@@ -936,7 +951,7 @@ export class McpService {
 
         return new Promise((resolve) => {
             const req = http.request({
-                host: '127.0.0.1',
+                host: this.getLocalProbeHost(),
                 port: serverPort,
                 path: '/internal/shutdown',
                 method: 'POST',
@@ -1034,6 +1049,7 @@ export class McpService {
             if (this.httpServer) {
                 const server = this.httpServer;
                 this.httpServer = undefined;
+                this.activeBindAddress = undefined;
                 this.isRunning = false;
 
                 if (forceImmediate) {

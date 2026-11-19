@@ -2,14 +2,20 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
-## [Unreleased]
+## [1.8.0] - 2026-11-20
 
-### Added
-- API key authentication for MCP HTTP transports, with one-time key display, multi-key management, revocation, and mandatory authentication for non-loopback binds.
-- Optional system alert sound for desktop confirmation prompts under **Settings → MCP → Pair Programming Mode**, off by default.
+Published to GitHub and npm.
 
-### Fixed
-- Keep confirmation prompts open when clicking the backdrop or pressing Escape. Explicit approval, rejection, and the two-minute timeout resolve the prompt.
+> ⚠️ **Upgrade note:** a server listening on `0.0.0.0` or another non-loopback address now rejects MCP requests without a valid API key. After upgrading, create a key under **Settings → MCP → API key authentication** and add `Authorization: Bearer <key>` to the client config. `127.0.0.1` keeps working without a key unless you turn authentication on.
+
+### ✨ Added
+- **API key authentication for MCP HTTP transports** ([PR #16](https://github.com/GentlemanHu/Tabby-MCP/pull/16), [Issue #15](https://github.com/GentlemanHu/Tabby-MCP/issues/15), thanks [@wanxi50](https://github.com/wanxi50)): multiple keys, one-time key display, SHA-256 hashes only in the config, revocation, `Authorization: Bearer <key>`. Optional on `127.0.0.1`, mandatory for `0.0.0.0` and other non-loopback binds. `/health` and the token-protected handover endpoint stay open. The connection info and copied client config use a reachable LAN IPv4 address when listening on `0.0.0.0`.
+- **Optional confirmation sound** ([PR #17](https://github.com/GentlemanHu/Tabby-MCP/pull/17), thanks [@bytepoem](https://github.com/bytepoem)): plays the system alert once per desktop confirmation prompt. Settings → MCP → Pair Programming Mode, off by default.
+
+### 🐛 Fixed
+- **Confirmation prompts no longer close on backdrop clicks or Escape** ([PR #17](https://github.com/GentlemanHu/Tabby-MCP/pull/17)). Approve, Reject, or the two-minute timeout resolve the prompt. Terminal focus is restored before the next queued prompt opens.
+- Previous-instance probing and port handover reach a specific bind address (for example `192.168.1.5`) instead of only `127.0.0.1`.
+- Authentication stays required while the running server is still bound to a non-loopback address, even if the setting was switched back to `127.0.0.1` without restarting.
 
 ## [1.7.3] - 2026-11-05
 

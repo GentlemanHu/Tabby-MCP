@@ -110,6 +110,22 @@ function testApprovalAndCancellationGuards() {
     assert.match(sftp, /executeWithSftp/, 'SFTP operations must support auto-recovery on stale channels');
 }
 
+function testAuthenticationAndDialogDismissal() {
+    const service = read('src/services/mcpService.ts');
+    assert.match(service, /this\.authenticateRequest\(req, res\)/, 'MCP HTTP routes must pass API key authentication');
+    assert.match(service, /getBindAddress\(\) !== '127\.0\.0\.1'/, 'Non-loopback binds must require an API key');
+    assert.equal(/host: '127\.0\.0\.1'/.test(service), false, 'Instance handover must reach a specific bind address, not only loopback');
+    const auth = read('src/services/mcpAuthentication.service.ts');
+    assert.match(auth, /timingSafeEqual/, 'API key comparison must be constant time');
+    assert.match(read('src/services/mcpConfigProvider.ts'), /confirmationSound: false/, 'Confirmation sound must stay opt-in');
+
+    const dialog = read('src/services/dialog.service.ts');
+    const keyHandler = dialog.slice(dialog.indexOf('const onKeyDown'), dialog.indexOf("rejectBtn.addEventListener('click'"));
+    assert.equal(keyHandler.includes('finish('), false, 'Escape must not resolve a pending approval');
+    const backdrop = dialog.slice(dialog.indexOf("overlay.addEventListener('mousedown'"), dialog.indexOf("document.addEventListener('keydown'"));
+    assert.equal(backdrop.includes('finish('), false, 'Backdrop clicks must not resolve a pending approval');
+}
+
 function testTranslations() {
     const en = JSON.parse(read('src/i18n/en-US.json'));
     const zh = JSON.parse(read('src/i18n/zh-CN.json'));
@@ -159,6 +175,7 @@ const tests = [
     ['legacy SSE parsed body', testLegacySseParsedBody],
     ['transport and lifecycle guards', testTransportAndLifecycleGuards],
     ['approval and cancellation guards', testApprovalAndCancellationGuards],
+    ['authentication and dialog dismissal', testAuthenticationAndDialogDismissal],
     ['translation parity', testTranslations],
     ['pinned MCP SDK', testPinnedSdkAndLockfile],
     ['stdio bridge syntax', testBridgeSyntax]

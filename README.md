@@ -85,7 +85,7 @@
 </div>
 
 
-> **Safety model (v1.7.3):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
+> **Safety model (v1.8.0):** Pair Programming Mode gates `exec_command`, `send_input`, keyboard-interactive authentication responses, and sensitive SFTP operations with a non-blocking approval dialog that automatically rejects after two minutes. Authentication response values are never shown in confirmation details. The dialog restores terminal focus to avoid Electron/xterm keyboard and IME issues. Read-only transfer-status tools and emergency `abort_command` remain available without approval. The server binds to `127.0.0.1` unless you change Listen address. Host and Origin checks still reject DNS names. The direct tool API is disabled by default.
 
 API key authentication is optional on `127.0.0.1` and is mandatory for `0.0.0.0` or another non-loopback bind address. Keys are generated once, displayed once, and stored as SHA-256 hashes. Configure clients with `Authorization: Bearer <key>`.
 
@@ -322,6 +322,7 @@ For clients that don't support SSE, use the STDIO bridge:
 |---------|-------------|---------|
 | Port | MCP server port | 3001 |
 | Listen address | Bind address. `0.0.0.0` exposes every interface for WSL; DNS hostnames stay rejected | 127.0.0.1 |
+| API key authentication | Require `Authorization: Bearer <key>`. Always on for non-loopback binds | false |
 | Start on Boot | Auto-start server | true |
 | Pair Programming | Confirm commands, raw input, and sensitive SFTP operations | true |
 | Confirmation sound | Play the system alert when a confirmation dialog appears in desktop Tabby | false |
@@ -395,6 +396,16 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 ---
 
 ## 📝 Changelog
+
+### v1.8.0 (2026-11-20)
+
+Published to [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.8.0) and npm (`tabby-mcp-server@1.8.0`).
+
+> ⚠️ Servers listening on `0.0.0.0` or another non-loopback address now require an API key. Create one in Settings → MCP and add `Authorization: Bearer <key>` to your client config.
+
+- API key authentication for MCP HTTP transports ([PR #16](https://github.com/GentlemanHu/Tabby-MCP/pull/16), [Issue #15](https://github.com/GentlemanHu/Tabby-MCP/issues/15), thanks [@wanxi50](https://github.com/wanxi50)). Keys are shown once and stored as SHA-256 hashes; revoked keys stop working immediately.
+- Confirmation prompts stay open on backdrop clicks and Escape; an optional system alert sound plays when a prompt appears ([PR #17](https://github.com/GentlemanHu/Tabby-MCP/pull/17), thanks [@bytepoem](https://github.com/bytepoem)).
+- Instance handover reaches a specific bind address instead of only `127.0.0.1`.
 
 ### v1.7.3 (2026-11-05)
 

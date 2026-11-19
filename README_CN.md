@@ -85,7 +85,7 @@
 </div>
 
 
-> **v1.7.3 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。服务器默认绑定 `127.0.0.1`，可在设置里改监听地址。Host 和 Origin 仍然拒绝域名。直连工具 API 默认关闭。
+> **v1.8.0 安全模型：** 结对编程模式通过非阻塞确认对话框保护 `exec_command`、`send_input`、键盘交互式认证响应和敏感 SFTP 操作；两分钟无人处理时自动拒绝。认证响应值绝不会显示在确认详情中。对话框关闭后会恢复终端焦点，避免 Electron/xterm 的键盘和输入法问题。只读的传输状态工具和用于紧急中止的 `abort_command` 无需确认。服务器默认绑定 `127.0.0.1`，可在设置里改监听地址。Host 和 Origin 仍然拒绝域名。直连工具 API 默认关闭。
 
 API key 鉴权在 `127.0.0.1` 上可选，在 `0.0.0.0` 或其他非回环监听地址上强制开启。Key 创建后只显示一次，服务端只保存 SHA-256 哈希。客户端使用 `Authorization: Bearer <key>` 连接。
 
@@ -284,6 +284,7 @@ npm run build
 |------|------|--------|
 | 端口 | MCP 服务器端口 | 3001 |
 | 监听地址 | 绑定地址。`0.0.0.0` 监听所有网卡，供 WSL 使用；域名仍然会被拒绝 | 127.0.0.1 |
+| API key 鉴权 | 要求 `Authorization: Bearer <key>`。非回环监听地址始终开启 | false |
 | 启动时运行 | 自动启动服务器 | true |
 | 结对编程模式 | 确认命令、原始输入和敏感 SFTP 操作 | true |
 | 确认提示音 | 桌面版 Tabby 显示确认对话框时播放系统提示音 | false |
@@ -357,6 +358,16 @@ npm run build
 ---
 
 ## 📝 更新日志
+
+### v1.8.0 (2026-11-20)
+
+同时发布到 [GitHub](https://github.com/GentlemanHu/Tabby-MCP/releases/tag/v1.8.0) 和 npm（`tabby-mcp-server@1.8.0`）。
+
+> ⚠️ 监听 `0.0.0.0` 或其他非回环地址时，现在必须使用 API key。请在 设置 → MCP 中创建 key，并在客户端配置里加上 `Authorization: Bearer <key>`。
+
+- MCP HTTP 传输支持 API key 鉴权（[PR #16](https://github.com/GentlemanHu/Tabby-MCP/pull/16)，[Issue #15](https://github.com/GentlemanHu/Tabby-MCP/issues/15)，感谢 [@wanxi50](https://github.com/wanxi50)）。Key 只显示一次，配置中只保存 SHA-256 哈希；撤销后立即失效。
+- 确认对话框不再因点击遮罩或按 Escape 关闭；可选在弹出时播放系统提示音（[PR #17](https://github.com/GentlemanHu/Tabby-MCP/pull/17)，感谢 [@bytepoem](https://github.com/bytepoem)）。
+- 旧实例端口交接可访问指定的监听 IP，而不再只探测 `127.0.0.1`。
 
 ### v1.7.3 (2026-11-05)
 
