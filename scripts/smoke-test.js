@@ -126,6 +126,18 @@ function testAuthenticationAndDialogDismissal() {
     assert.equal(backdrop.includes('finish('), false, 'Backdrop clicks must not resolve a pending approval');
 }
 
+function testShellAwareExecution() {
+    const terminal = read('src/tools/terminal.ts');
+    const exec = terminal.slice(terminal.indexOf("name: 'exec_command'"), terminal.indexOf('private resolveExecPlan('));
+    assert.match(exec, /this\.resolveExecPlan\(session, params\)/, 'exec_command must resolve a per-session execution plan');
+    assert.match(exec, /shell: z\.enum\(SHELL_OVERRIDES/, 'exec_command must accept a shell override');
+    assert.match(exec, /isPosixMode\(plan\.mode\)[\s\S]*getWrappedCommand\(command, startMarker, endMarker, plan\.mode\)/,
+        'POSIX shells must keep the existing wrapper');
+    const probe = terminal.slice(terminal.indexOf('private async detectActiveShellEnvironment'), terminal.indexOf('private createGetTerminalBufferTool'));
+    assert.match(probe, /!isPosixMode\(plan\.mode\)/, 'Active environment probes must not be typed into non-POSIX shells');
+    assert.match(read('src/services/mcpConfigProvider.ts'), /execRules: \[\]/, 'Execution rules must default to auto detection only');
+}
+
 function testTranslations() {
     const en = JSON.parse(read('src/i18n/en-US.json'));
     const zh = JSON.parse(read('src/i18n/zh-CN.json'));
@@ -176,6 +188,7 @@ const tests = [
     ['transport and lifecycle guards', testTransportAndLifecycleGuards],
     ['approval and cancellation guards', testApprovalAndCancellationGuards],
     ['authentication and dialog dismissal', testAuthenticationAndDialogDismissal],
+    ['shell-aware execution', testShellAwareExecution],
     ['translation parity', testTranslations],
     ['pinned MCP SDK', testPinnedSdkAndLockfile],
     ['stdio bridge syntax', testBridgeSyntax]

@@ -166,5 +166,20 @@
     "mcp.monitor.clearHistory": "Clear History",
     "mcp.tools.restart.confirm": "The visible MCP tool set changed. Restart the server now so current clients receive the updated tool list? Existing clients may need to reconnect.",
     "mcp.tools.restart.done": "✓ Settings saved and MCP server restarted",
-    "mcp.tools.restart.later": "✓ Settings saved. Existing MCP clients may need to reconnect before the tool list updates."
+    "mcp.tools.restart.later": "✓ Settings saved. Existing MCP clients may need to reconnect before the tool list updates.",
+    "mcp.exec.title": "Command execution",
+    "mcp.exec.desc": "exec_command detects bash/zsh/fish, PowerShell and cmd.exe automatically and falls back to raw mode for other CLIs. Add a rule when a tab needs a fixed mode.",
+    "mcp.exec.enabled": "Enabled",
+    "mcp.exec.match": "Tab title or profile name (* = all, /regex/)",
+    "mcp.exec.mode.auto": "Auto",
+    "mcp.exec.mode.raw": "Raw (wait for prompt)",
+    "mcp.exec.mode.template": "Template",
+    "mcp.exec.escape": "Escape the command as",
+    "mcp.exec.escape.none": "No escaping",
+    "mcp.exec.lineEnding": "Enter key",
+    "mcp.exec.lineEnding.auto": "Enter: auto",
+    "mcp.exec.promptPattern": "Prompt regex (optional)",
+    "mcp.exec.idleMs": "Idle ms",
+    "mcp.exec.add": "Add rule",
+    "mcp.exec.remove": "Remove"
 }

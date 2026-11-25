@@ -2,6 +2,26 @@
 
 All notable changes to Tabby-MCP will be documented in this file.
 
+## [1.9.0-rc.1] - 2026-11-25
+
+> ⚠️ **Prerelease.** Published to GitHub only, not to npm. PowerShell, cmd.exe, OSC 133 and RouterOS paths are covered by unit tests but not yet verified on real Windows or RouterOS systems.
+
+### ✨ Added
+- **Windows shells and non-shell CLIs in `exec_command`** ([Issue #18](https://github.com/GentlemanHu/Tabby-MCP/issues/18)). Execution is layered so new environments do not need code changes:
+  - Built-in drivers: bash/zsh/sh/fish (unchanged), PowerShell (`Invoke-Expression` keeps parse errors inside the line; multi-line input is base64-encoded; all PowerShell single-quote forms are escaped), cmd.exe (`(call )` resets and `call echo %^errorlevel%` reads `ERRORLEVEL` after the command).
+  - `osc133`: shells that emit OSC 133/633 command-finished marks report output and exit code without a wrapper.
+  - `raw`: the command is sent as typed and the call returns when the prompt comes back after a quiet period (RouterOS, switches, REPLs). `exitCode` is `null`; pagers such as `--More--` return `pagerDetected`.
+  - `template`: user-defined wrapper lines with `{start}`, `{end}`, `{command}` placeholders.
+- New optional `exec_command` parameters `shell`, `promptPattern`, `idleMs`, `lineEnding`; results include `mode` and `modeReason`.
+- **Settings → MCP → Command execution**: rules per tab title / profile (substring, `/regex/` or `*`) selecting the mode, template, escaping, Enter key, prompt regex and idle time.
+
+### 🐛 Fixed
+- Auto detection recognizes `PS …>`, `C:\…>` (including `user@HOST C:\…>` from Windows OpenSSH) and RouterOS prompts, local PowerShell/cmd profiles, and Windows/RouterOS banners. POSIX prompts keep the existing drivers.
+- A shell that never prints the wrapper's start marker while its prompt returns is reported as `wrapperRejected` after a quiet period instead of a timeout; later commands at that prompt use raw mode.
+- Negative exit codes are parsed.
+- `get_session_environment` reports `powershell`, `cmd` and `routeros`; active mode no longer sends POSIX probes into those sessions.
+- The settings update check offers a stable release to installs of the same version's prerelease.
+
 ## [1.8.0] - 2026-11-20
 
 Published to GitHub and npm.

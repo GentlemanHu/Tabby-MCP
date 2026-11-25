@@ -166,5 +166,20 @@
     "mcp.monitor.clearHistory": "清空历史",
     "mcp.tools.restart.confirm": "可见的 MCP 工具集已改变。是否现在重启服务器，让当前客户端获取更新后的工具列表？现有客户端可能需要重新连接。",
     "mcp.tools.restart.done": "✓ 设置已保存，并已重启 MCP 服务器",
-    "mcp.tools.restart.later": "✓ 设置已保存。现有 MCP 客户端可能需要重新连接后才能看到更新后的工具列表。"
+    "mcp.tools.restart.later": "✓ 设置已保存。现有 MCP 客户端可能需要重新连接后才能看到更新后的工具列表。",
+    "mcp.exec.title": "命令执行",
+    "mcp.exec.desc": "exec_command 会自动识别 bash/zsh/fish、PowerShell 和 cmd.exe，其他命令行回退到原样模式。某个标签页需要固定模式时添加规则。",
+    "mcp.exec.enabled": "启用",
+    "mcp.exec.match": "标签标题或配置名称（* 表示全部，/正则/）",
+    "mcp.exec.mode.auto": "自动",
+    "mcp.exec.mode.raw": "原样（等待提示符）",
+    "mcp.exec.mode.template": "模板",
+    "mcp.exec.escape": "命令的转义方式",
+    "mcp.exec.escape.none": "不转义",
+    "mcp.exec.lineEnding": "回车键",
+    "mcp.exec.lineEnding.auto": "回车：自动",
+    "mcp.exec.promptPattern": "提示符正则（可选）",
+    "mcp.exec.idleMs": "静默毫秒",
+    "mcp.exec.add": "添加规则",
+    "mcp.exec.remove": "删除"
 }

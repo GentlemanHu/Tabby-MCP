@@ -1,6 +1,6 @@
 {
   "name": "tabby-mcp-server",
-  "version": "1.8.0",
+  "version": "1.9.0-rc.1",
   "description": "MCP (Model Context Protocol) server plugin for Tabby terminal - Complete terminal control with 37 MCP tools including SFTP file transfer",
   "homepage": "https://github.com/GentlemanHu/Tabby-MCP",
   "repository": {
@@ -27,7 +27,7 @@
   "scripts": {
     "build": "webpack --progress --color",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/smoke-test.js",
+    "test": "node scripts/smoke-test.js && node scripts/exec-driver-test.js",
     "check": "npm run typecheck && npm test && npm run build",
     "watch": "webpack --progress --color --watch",
     "install-plugin": "bash scripts/install.sh",

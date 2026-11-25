@@ -60,7 +60,9 @@ export class McpConfigProvider extends ConfigProvider {
             authentication: {
                 enabled: false,
                 apiKeys: []
-            }
+            },
+            // Per tab/profile execution rules for exec_command (Issue #18); empty = auto detection only
+            execRules: []
         }
     };
 }

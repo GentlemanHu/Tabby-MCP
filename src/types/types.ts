@@ -1,3 +1,5 @@
+import type { ExecRule } from '../tools/execDrivers';
+
 /**
  * MCP Tool definition interface
  */
@@ -32,11 +34,18 @@ export interface TerminalSession {
 export interface CommandResult {
     success: boolean;
     output: string;
-    exitCode?: number;
+    exitCode?: number | null;
     error?: string;
     outputId?: string;
     totalLines?: number;
     canReconnect?: boolean;
+    /** Raw/template/OSC 133 modes may not know the exit code (exitCode is null then) */
+    exitCodeKnown?: boolean;
+    /** The shell printed no start marker; the command may not have run */
+    wrapperRejected?: boolean;
+    /** Raw mode stopped at a pager prompt such as --More-- */
+    pagerDetected?: boolean;
+    hint?: string;
 }
 
 /**
@@ -105,6 +114,8 @@ export interface McpConfig {
         enabled: boolean;
         apiKeys: McpApiKey[];
     };
+    /** exec_command rules per tab/profile (Issue #18) */
+    execRules?: ExecRule[];
     useStreamCapture?: boolean; // Experimental mode to fix output truncation
     /** Internal loopback handover secret; generated lazily and never exposed by MCP endpoints */
     serverControlToken?: string;

@@ -206,7 +206,7 @@ npm run build
 | 工具 | 说明 |
 |------|------|
 | `get_session_list` | 列出所有终端会话（**包含稳定 UUID**） |
-| `exec_command` | 执行命令（支持多种定位方式） |
+| `exec_command` | 执行命令并返回输出和退出码。支持 bash/zsh/fish、PowerShell、cmd.exe 及其他命令行（见[Shell 与设备](#-shell-与设备)） |
 | `send_input` | 发送交互式输入 (Ctrl+C 等) |
 | `submit_keyboard_interactive_response` | 提交 MFA、密码或其他 SSH 键盘交互式认证响应 |
 | `reconnect_session` | 重新连接已断开或已关闭的终端会话 |
@@ -293,9 +293,33 @@ npm run build
 | 后台执行 | 无需聚焦执行 | false |
 | SFTP 启用 | 启用 SFTP 工具 | true |
 | 环境探测 | 暴露 `get_session_environment` | false |
+| 命令执行 | 按标签页/配置设置 `exec_command` 规则：模式、包装模板、提示符正则、回车键、静默时长 | 无（自动） |
 | 直连工具 API | 启用兼容端点 `/api/tool/:name`（仅支持手动配置） | false |
 
 点击「批准」或「拒绝」即可处理确认请求。点击遮罩或按 Escape 后，对话框会继续等待选择，两分钟后自动拒绝。
+
+---
+
+## 🐚 Shell 与设备
+
+`exec_command` 会为每个会话选择执行模式，结果中的 `mode` 和 `modeReason` 会说明用了哪种。
+
+| 模式 | 适用场景 | 退出码 |
+|------|----------|--------|
+| `bash` / `zsh` / `sh` / `fish` | POSIX shell（行为不变） | ✅ |
+| `powershell` | `PS C:\…>` 提示符、本地 `powershell.exe` / `pwsh` 配置、通过 SSH 连接的 Windows | ✅ |
+| `cmd` | `C:\…>` 提示符、本地 `cmd.exe` 配置、Windows OpenSSH 默认 shell | ✅（`ERRORLEVEL`） |
+| `osc133` | 会输出 OSC 133/633“命令结束”标记的 shell（终端集成） | ✅（shell 提供时） |
+| `raw` | 路由器、交换机、REPL 等命令行：原样发送命令，提示符重新出现后返回 | `null` |
+| `template` | 在规则中自定义包装，例如 RouterOS：`:put "{start}"; {command}; :put "{end} 0"` | 由模板决定 |
+
+- **自动模式**下，只有提示符或配置明确显示为 PowerShell、cmd.exe 或 RouterOS 时才会离开 POSIX 驱动；会输出 OSC 133 的非 POSIX shell 使用该标记。
+- 如果 shell 没有打印包装命令的开始标记、提示符却已返回，调用会返回 `wrapperRejected: true`，不再等到超时；之后该提示符下的命令自动改用原样模式。
+- 原样模式遇到 `--More--` 等分页提示会停下并返回 `pagerDetected: true`。提示符特殊时传 `promptPattern`，输出中途会停顿时调大 `idleMs`。
+- 可在单次调用中用 `shell`、`promptPattern`、`idleMs`、`lineEnding` 覆盖，或在 **设置 → MCP → 命令执行** 中按标签页/配置设置规则。
+- 开启流式捕获时，只有 POSIX 驱动读取数据流，其他模式读取屏幕内容。
+
+> ⚠️ PowerShell、cmd.exe、OSC 133 和 RouterOS 支持首次发布于 1.9.0-rc.1，尚未在真实 Windows 或 RouterOS 系统上验证（[Issue #18](https://github.com/GentlemanHu/Tabby-MCP/issues/18)）。
 
 ---
 
@@ -358,6 +382,17 @@ npm run build
 ---
 
 ## 📝 更新日志
+
+### v1.9.0-rc.1 (2026-11-25) — 预发布
+
+> ⚠️ **预发布版本，仅发布在 GitHub，未发布至 npm。** PowerShell、cmd.exe、OSC 133 和 RouterOS 路径已有单元测试覆盖，但尚未在真实系统上验证。
+
+- `exec_command` 支持 Windows shell 和非 shell 命令行（[Issue #18](https://github.com/GentlemanHu/Tabby-MCP/issues/18)）：PowerShell 与 cmd.exe 包装（含退出码）、OSC 133 终端集成、适用于 RouterOS 等设备的原样（等待提示符）模式，以及用户模板。新增可选参数：`shell`、`promptPattern`、`idleMs`、`lineEnding`。
+- 设置 → MCP → 命令执行：可按标签页/配置添加规则。
+- shell 不认识包装命令时，返回 `wrapperRejected` 而不是超时，之后该提示符下的命令自动改用原样模式。
+- 支持解析负数退出码（Windows NTSTATUS）。
+- `get_session_environment` 能识别 PowerShell、cmd.exe 和 RouterOS 提示符，主动模式不再向它们输入 POSIX 探测命令。
+- 设置页更新检查会向预发布版本用户提示对应的正式版。
 
 ### v1.8.0 (2026-11-20)
 

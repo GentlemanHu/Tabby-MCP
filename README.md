@@ -244,7 +244,7 @@ For clients that don't support SSE, use the STDIO bridge:
 | Tool | Description |
 |------|-------------|
 | `get_session_list` | List all terminal sessions with **stable UUIDs** and metadata |
-| `exec_command` | Execute command with flexible session targeting |
+| `exec_command` | Execute a command and return output + exit code. Works with bash/zsh/fish, PowerShell, cmd.exe and other CLIs ([Shells & devices](#-shells--devices)) |
 | `send_input` | Send interactive input (Ctrl+C, etc) |
 | `submit_keyboard_interactive_response` | Submit MFA, password, or other SSH keyboard-interactive responses |
 | `reconnect_session` | Reconnect a closed or disconnected terminal session |
@@ -331,9 +331,33 @@ For clients that don't support SSE, use the STDIO bridge:
 | Background Execution | Run without focus | false |
 | SFTP Enabled | Enable SFTP tools | true |
 | Environment Detection | Expose `get_session_environment` | false |
+| Command execution | Per tab/profile rules for `exec_command`: mode, wrapper template, prompt regex, Enter key, idle time | none (auto) |
 | Direct Tool API | Enable compatibility endpoint `/api/tool/:name` (manual config only) | false |
 
 Click **Approve** or **Reject** to resolve an approval prompt. Clicking the backdrop or pressing Escape keeps it open until you choose or the two-minute timeout expires.
+
+---
+
+## 🐚 Shells & devices
+
+`exec_command` picks an execution mode per session. The result reports it as `mode` and `modeReason`.
+
+| Mode | Used for | Exit code |
+|------|----------|-----------|
+| `bash` / `zsh` / `sh` / `fish` | POSIX shells (unchanged behavior) | ✅ |
+| `powershell` | `PS C:\…>` prompts, local `powershell.exe` / `pwsh` profiles, Windows over SSH | ✅ |
+| `cmd` | `C:\…>` prompts, local `cmd.exe` profiles, Windows OpenSSH default shell | ✅ (`ERRORLEVEL`) |
+| `osc133` | Any shell that emits OSC 133/633 command-finished marks (shell integration) | ✅ when the shell reports it |
+| `raw` | Routers, switches, REPLs and other CLIs: the command is sent as typed and the call returns when the prompt comes back | `null` |
+| `template` | A wrapper you define in a rule, e.g. RouterOS `:put "{start}"; {command}; :put "{end} 0"` | from the template |
+
+- **Auto** keeps the POSIX drivers unless the prompt or profile clearly shows PowerShell, cmd.exe or RouterOS. Non-POSIX shells that emit OSC 133 use those marks.
+- If a shell prints none of the wrapper's start marker and its prompt comes back, the call returns `wrapperRejected: true` instead of waiting for the timeout, and later commands at that prompt use raw mode.
+- Raw mode stops at pagers such as `--More--` and reports `pagerDetected: true`. Pass `promptPattern` for unusual prompts and `idleMs` for output that pauses.
+- Override per call with `shell`, `promptPattern`, `idleMs` and `lineEnding`, or per tab/profile in **Settings → MCP → Command execution**.
+- With Stream Capture on, only the POSIX drivers read the stream; the other modes read the screen.
+
+> ⚠️ PowerShell, cmd.exe, OSC 133 and RouterOS handling ships in 1.9.0-rc.1 and has not been verified on real Windows or RouterOS systems yet ([Issue #18](https://github.com/GentlemanHu/Tabby-MCP/issues/18)).
 
 ---
 
@@ -396,6 +420,17 @@ This project builds upon the work of [tabby-mcp-server](https://github.com/thuan
 ---
 
 ## 📝 Changelog
+
+### v1.9.0-rc.1 (2026-11-25) — prerelease
+
+> ⚠️ **Prerelease, published to GitHub only (not on npm).** PowerShell, cmd.exe, OSC 133 and RouterOS paths are covered by unit tests but not yet verified on real systems.
+
+- `exec_command` supports Windows shells and non-shell CLIs ([Issue #18](https://github.com/GentlemanHu/Tabby-MCP/issues/18)): PowerShell and cmd.exe wrappers with exit codes, OSC 133 shell integration, raw prompt-return mode for RouterOS and other devices, and user templates. New optional parameters: `shell`, `promptPattern`, `idleMs`, `lineEnding`.
+- Settings → MCP → Command execution: rules per tab/profile.
+- A shell that ignores the wrapper now returns `wrapperRejected` instead of timing out, and later commands at that prompt use raw mode.
+- Negative exit codes (Windows NTSTATUS values) are parsed.
+- `get_session_environment` recognizes PowerShell, cmd.exe and RouterOS prompts, and active mode no longer types POSIX probes into them.
+- The settings update check offers the stable release to prerelease installs.
 
 ### v1.8.0 (2026-11-20)
 

@@ -8,6 +8,9 @@ import { DialogService } from '../services/dialog.service';
 import { PluginUpdateService } from '../services/pluginUpdate.service';
 import { SFTPToolCategory } from '../tools/sftp';
 import { PLUGIN_VERSION } from '../version';
+import {
+  ExecRule, LINE_ENDINGS, RULE_MODES, TEMPLATE_ESCAPES, compilePromptPattern, validateTemplate
+} from '../tools/execDrivers';
 
 /**
  * MCP Settings Tab Component with i18n support
@@ -312,6 +315,36 @@ import { PLUGIN_VERSION } from '../version';
         </ul>
       </div>
       <hr />
+      <h4>⌨️ {{ t('mcp.exec.title') }}</h4>
+      <small class="form-text text-muted mb-2">{{ t('mcp.exec.desc') }}</small>
+      <div class="exec-rule" *ngFor="let rule of execRules; let i = index">
+        <div class="exec-rule-row">
+          <input type="checkbox" [(ngModel)]="rule.enabled" (change)="saveExecRules()" [title]="t('mcp.exec.enabled')">
+          <input class="form-control" [(ngModel)]="rule.match" (change)="saveExecRules()" [placeholder]="t('mcp.exec.match')">
+          <select class="form-control" [(ngModel)]="rule.mode" (change)="saveExecRules()">
+            <option *ngFor="let mode of ruleModes" [value]="mode">{{ modeLabel(mode) }}</option>
+          </select>
+          <button class="btn btn-sm btn-outline-danger" type="button" (click)="removeExecRule(i)">{{ t('mcp.exec.remove') }}</button>
+        </div>
+        <ng-container *ngIf="rule.mode === 'template'">
+          <textarea class="form-control mt-2 exec-template" rows="3" [(ngModel)]="rule.template" (change)="saveExecRules()"
+            placeholder=":put &quot;{start}&quot;; {command}; :put &quot;{end} 0&quot;"></textarea>
+          <small class="form-text text-warning" *ngIf="templateProblem(rule)">{{ templateProblem(rule) }}</small>
+        </ng-container>
+        <div class="exec-rule-row mt-2">
+          <select class="form-control" *ngIf="rule.mode === 'template'" [(ngModel)]="rule.escape" (change)="saveExecRules()" [title]="t('mcp.exec.escape')">
+            <option *ngFor="let escape of templateEscapes" [value]="escape">{{ escapeLabel(escape) }}</option>
+          </select>
+          <select class="form-control" [(ngModel)]="rule.lineEnding" (change)="saveExecRules()" [title]="t('mcp.exec.lineEnding')">
+            <option *ngFor="let ending of lineEndings" [value]="ending">{{ lineEndingLabel(ending) }}</option>
+          </select>
+          <input class="form-control" [(ngModel)]="rule.promptPattern" (change)="saveExecRules()" [placeholder]="t('mcp.exec.promptPattern')">
+          <input class="form-control exec-idle" type="number" min="200" max="60000" step="100" [(ngModel)]="rule.idleMs" (change)="saveExecRules()" [placeholder]="t('mcp.exec.idleMs')">
+        </div>
+        <small class="form-text text-warning" *ngIf="patternProblem(rule)">{{ patternProblem(rule) }}</small>
+      </div>
+      <button class="btn btn-sm btn-outline-primary mt-1" type="button" (click)="addExecRule()">{{ t('mcp.exec.add') }}</button>
+      <hr />
       <h4>🧪 {{ t('mcp.experimental.title') || 'Experimental Features' }}</h4>
       <div class="form-group">
         <div class="checkbox">
@@ -598,6 +631,14 @@ import { PLUGIN_VERSION } from '../version';
       background: rgba(40, 167, 69, 0.15); border: 1px solid rgba(40, 167, 69, 0.45);
     }
     .update-detail { opacity: 0.75; font-size: 0.85em; }
+    .exec-rule {
+      margin: 0.5rem 0; padding: 0.75rem; border-radius: 6px;
+      border: 1px solid rgba(128, 128, 128, 0.3);
+    }
+    .exec-rule-row { display: flex; align-items: center; gap: 0.5rem; }
+    .exec-rule-row .form-control { flex: 1 1 0; min-width: 0; }
+    .exec-rule-row .exec-idle { flex: 0 0 7rem; }
+    .exec-template { font-family: monospace; font-size: 0.85em; }
     .log-status { margin-left: 0.75rem; font-size: 0.85em; opacity: 0.8; }
     .log-panel {
       max-height: 280px; overflow: auto; margin: 0.5rem 0 0;
@@ -848,6 +889,10 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
   private lastSftpEnabled = true;
   private lastPort = 3001;
   private lastBindAddress = '127.0.0.1';
+  execRules: ExecRule[] = [];
+  readonly ruleModes = RULE_MODES;
+  readonly lineEndings = LINE_ENDINGS;
+  readonly templateEscapes = TEMPLATE_ESCAPES;
   newApiKeyName = '';
   newApiKeySecret = '';
   apiKeys = this.getActiveApiKeys();
@@ -933,6 +978,8 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     if (!this.config.store.mcp.authentication) {
       this.config.store.mcp.authentication = { enabled: false, apiKeys: [] };
     }
+    const storedRules = this.config.store.mcp.execRules;
+    this.execRules = Array.isArray(storedRules) ? storedRules.map((rule: ExecRule) => ({ ...rule })) : [];
     // Ensure new fields exist on existing config
     if (this.config.store.mcp.sftp.maxUploadSize === undefined) {
       this.config.store.mcp.sftp.maxUploadSize = 10 * 1024 * 1024 * 1024;
@@ -952,6 +999,81 @@ export class McpSettingsTabComponent implements OnInit, OnDestroy {
     this.lastPort = this.config.store.mcp.port || 3001;
     this.lastBindAddress = this.config.store.mcp.bindAddress;
     void this.checkForUpdate();
+  }
+
+  // ============== Command execution rules (Issue #18) ==============
+
+  addExecRule(): void {
+    this.execRules.push({
+      id: `rule_${Date.now().toString(36)}`,
+      enabled: true,
+      match: '',
+      mode: 'raw',
+      lineEnding: 'auto',
+      escape: 'none'
+    });
+    void this.saveExecRules();
+  }
+
+  removeExecRule(index: number): void {
+    this.execRules.splice(index, 1);
+    void this.saveExecRules();
+  }
+
+  async saveExecRules(): Promise<void> {
+    this.config.store.mcp.execRules = this.execRules.map(rule => {
+      const copy: ExecRule = { ...rule, match: (rule.match || '').trim() };
+      const idle = Number(rule.idleMs);
+      if (rule.idleMs === undefined || rule.idleMs === null || (rule.idleMs as any) === '' || !Number.isFinite(idle)) {
+        delete copy.idleMs;
+      } else {
+        copy.idleMs = idle;
+      }
+      if (!copy.promptPattern) {
+        delete copy.promptPattern;
+      }
+      if (copy.mode !== 'template') {
+        delete copy.template;
+      }
+      return copy;
+    });
+    await this.config.save();
+    this.saveMessage = this.t('mcp.common.saved');
+    setTimeout(() => { this.saveMessage = ''; }, 3000);
+  }
+
+  templateProblem(rule: ExecRule): string | null {
+    return rule.mode === 'template' ? validateTemplate(rule.template) : null;
+  }
+
+  patternProblem(rule: ExecRule): string | null {
+    return compilePromptPattern(rule.promptPattern).error || null;
+  }
+
+  modeLabel(mode: string): string {
+    const names: Record<string, string> = {
+      auto: this.t('mcp.exec.mode.auto'),
+      raw: this.t('mcp.exec.mode.raw'),
+      template: this.t('mcp.exec.mode.template'),
+      osc133: 'OSC 133',
+      powershell: 'PowerShell',
+      cmd: 'cmd.exe'
+    };
+    return names[mode] || mode;
+  }
+
+  lineEndingLabel(ending: string): string {
+    return ending === 'auto' ? this.t('mcp.exec.lineEnding.auto') : ending.toUpperCase();
+  }
+
+  escapeLabel(escape: string): string {
+    const names: Record<string, string> = {
+      'none': this.t('mcp.exec.escape.none'),
+      'posix-single': "POSIX '…'",
+      'powershell-single': "PowerShell '…'",
+      'double-quote': '"…"'
+    };
+    return names[escape] || escape;
   }
 
   isWideBind(): boolean {

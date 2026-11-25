@@ -10,6 +10,33 @@ import { BaseToolCategory } from './base-tool-category';
 import { McpLoggerService } from '../services/mcpLogger.service';
 import { DialogService } from '../services/dialog.service';
 import { McpTool, ActiveCommand, CommandResult, EnhancedTerminalSession, SessionLocator } from '../types/types';
+import {
+    ExecMode, ExecRule, LineEndingSetting, ShellOverride, TemplateEscape, SHELL_OVERRIDES, LINE_ENDINGS,
+    WRAPPER_REJECT_IDLE_MS, buildBuiltinWrapper, buildPosixWrapper, buildTemplateLines, clampIdleMs,
+    classifyPromptLine, compilePromptPattern, containsCommandFinishedMark, extractMarkedOutput, extractRawOutput,
+    findEndMarker, findMatchingRule, findPrintedStartMarker, isPagerLine, isPosixMode, isPromptReturned,
+    isEchoLine, lastNonEmptyLine, lineEndingFor, normalizeTerminalText, parseSemanticCommand, resolveAutoMode,
+    splitLines, tailLines, trimTrailingEmptyLines, validateTemplate
+} from './execDrivers';
+
+/** How exec_command will run a command in a given session (Issue #18) */
+interface ExecPlan {
+    mode: ExecMode;
+    reason: string;
+    lineEnding: string;
+    idleMs: number;
+    promptRegex?: RegExp;
+    template?: string;
+    escape?: TemplateEscape;
+}
+
+/** Prompt-return context captured right before a command is sent */
+interface PromptContext {
+    before: string;
+    learnedPrompt: string;
+    idleMs: number;
+    promptRegex?: RegExp;
+}
 
 /**
  * Terminal session with stable ID for tracking
@@ -46,6 +73,12 @@ export class TerminalToolCategory extends BaseToolCategory {
 
     // Shell type cache per session (avoids repeated detection)
     private shellTypeCache = new Map<string, 'bash' | 'zsh' | 'fish' | 'sh'>();
+
+    // Prompt lines that rejected the shell wrapper; such sessions use raw mode (Issue #18)
+    private learnedRawPrompts = new Map<string, string>();
+
+    // Sessions whose shell reported a command-finished semantic mark (OSC 133/633 D)
+    private osc133Sessions = new Set<string>();
 
     public readonly activeCommands$ = this._activeCommandsSubject.asObservable();
 
@@ -238,25 +271,7 @@ export class TerminalToolCategory extends BaseToolCategory {
         endMarker: string,
         shellType: 'bash' | 'zsh' | 'fish' | 'sh'
     ): string {
-        switch (shellType) {
-            case 'fish':
-                // Fish shell: use $status instead of $?, eval with double quotes
-                // Fish escaping: \ escapes " and \ inside double quotes
-                const fishEscaped = command
-                    .replace(/\\/g, '\\\\')  // Escape backslashes first
-                    .replace(/"/g, '\\"');   // Escape double quotes
-                return `echo "${startMarker}"; eval "${fishEscaped}"; set -l __mcp_exit $status; echo "${endMarker} $__mcp_exit"`;
-
-            case 'bash':
-            case 'zsh':
-            case 'sh':
-            default:
-                // Bash/Zsh/POSIX: wrap in eval to catch syntax errors
-                // Use single quotes to prevent premature variable expansion
-                // Escape strategy: ' -> '\'' (close quote, escaped quote, open quote)
-                const escaped = command.replace(/'/g, "'\\''");
-                return `echo "${startMarker}" && eval '${escaped}' ; echo "${endMarker} $?"`;
-        }
+        return buildPosixWrapper(command, startMarker, endMarker, shellType);
     }
 
     /**
@@ -423,6 +438,15 @@ Session targeting (priority order): sessionId > tabIndex > title > profileName
 - title: Match by terminal title (partial, case-insensitive)
 - profileName: Match by profile name (partial, case-insensitive)
 
+Shell handling (shell, default "auto"):
+- auto: bash/zsh/sh/fish as before; PowerShell and cmd.exe prompts (local or over SSH) get native wrappers;
+  devices such as RouterOS fall back to raw mode; shells that emit OSC 133 marks use them
+- bash | zsh | sh | fish | powershell | cmd: force a built-in wrapper (exit code reported)
+- raw: send the command as typed and wait for the prompt to return (any CLI; exitCode is null)
+- osc133: rely on the shell's semantic prompt marks (OSC 133/633)
+Rules in Settings → MCP → Command execution can set the mode, a wrapper template, prompt pattern and line ending per tab/profile.
+The result reports "mode" and "modeReason".
+
 For interactive/paging commands (less, vim, top), set waitForOutput=false.
 For long-running commands, increase timeout or use waitForOutput=false and poll with get_terminal_buffer.`,
             schema: z.object({
@@ -432,7 +456,13 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                 title: z.string().optional().describe('Match session by title (partial, case-insensitive)'),
                 profileName: z.string().optional().describe('Match session by profile name (partial, case-insensitive)'),
                 waitForOutput: z.boolean().optional().describe('Wait for command completion (default: true). Set false for interactive commands.'),
-                timeout: z.number().optional().describe('Timeout in ms (default: 30000, max: 300000)')
+                timeout: z.number().optional().describe('Timeout in ms (default: 30000, max: 300000)'),
+                shell: z.enum(SHELL_OVERRIDES as [ShellOverride, ...ShellOverride[]]).optional()
+                    .describe('Execution mode (default: auto). Use raw for routers, switches and other non-shell CLIs.'),
+                promptPattern: z.string().optional().describe('Regex matching the prompt line; used by raw mode to detect completion'),
+                idleMs: z.number().optional().describe('Raw mode: quiet time in ms before the returned prompt counts as done (default: 1200)'),
+                lineEnding: z.enum(LINE_ENDINGS as [LineEndingSetting, ...LineEndingSetting[]]).optional()
+                    .describe('Enter key sent after the command (default: auto = LF for POSIX shells, CR otherwise)')
             }),
             handler: async (params: {
                 command: string;
@@ -442,6 +472,10 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                 profileName?: string;
                 waitForOutput?: boolean;
                 timeout?: number;
+                shell?: ShellOverride;
+                promptPattern?: string;
+                idleMs?: number;
+                lineEnding?: LineEndingSetting;
             }) => {
                 const { command, sessionId, tabIndex, title, profileName, waitForOutput = true, timeout: rawTimeout = 30000 } = params;
                 const timeout = Math.min(rawTimeout, 300000); // Max 5 minutes
@@ -473,6 +507,7 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                     }
                 }
 
+                let stopSemanticWatch: (() => void) | undefined;
                 try {
                     // If session is closed and supports reconnect (e.g. SSH "Press any key to reconnect"),
                     // attempt auto-reconnect before failing (Issue #14 companion)
@@ -504,9 +539,17 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                         }
                     }
 
+                    // Decide how to run the command in this session (Issue #18)
+                    const planned = this.resolveExecPlan(session, params);
+                    if ('error' in planned) {
+                        return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: planned.error }) }] };
+                    }
+                    const plan = planned;
+                    const modeInfo = { mode: plan.mode, modeReason: plan.reason };
+
                     // For non-waiting mode, just send the command
                     if (!waitForOutput) {
-                        session.tab.sendInput(command + '\n');
+                        session.tab.sendInput(command + plan.lineEnding);
                         this.logger.info(`Sent command (async): ${command} in session ${session.sessionId}`);
                         return {
                             content: [{
@@ -514,7 +557,8 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                                     success: true,
                                     sessionId: session.sessionId,
                                     message: 'Command sent (not waiting for output)',
-                                    hint: 'Use get_terminal_buffer with same sessionId to check output'
+                                    hint: 'Use get_terminal_buffer with same sessionId to check output',
+                                    ...modeInfo
                                 })
                             }]
                         };
@@ -538,40 +582,72 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                     this._activeCommands.set(session.sessionId, activeCommand);
                     this._activeCommandsSubject.next(new Map(this._activeCommands));
 
-                    // Setup Stream Capture if enabled
-                    const useStreamCapture = this.config.store.mcp?.useStreamCapture ?? false;
-                    let outputStream$: ReplaySubject<string> | undefined;
-                    let rawSubscription: Subscription | undefined;
+                    // Prompt context for completion detection and wrapper-rejection fallback
+                    const before = this.getTerminalPlainText(session);
+                    const prompt: PromptContext = {
+                        before,
+                        learnedPrompt: lastNonEmptyLine(before),
+                        idleMs: plan.idleMs,
+                        promptRegex: plan.promptRegex
+                    };
+                    stopSemanticWatch = this.watchSemanticMarks(session);
 
-                    if (useStreamCapture) {
-                        const sessionAny = session.tab.session as any;
-                        if (sessionAny?.output$) {
-                            outputStream$ = new ReplaySubject<string>();
-                            rawSubscription = sessionAny.output$.subscribe(outputStream$);
-                            this.logger.debug(`[Exec] Stream capture enabled for session ${session.sessionId}`);
-                        } else {
-                            this.logger.warn(`[Exec] Stream capture requested but output$ unavailable. Fallback to buffer.`);
-                        }
-                    }
-
-                    // Send command with markers - use shell-aware wrapper
-                    const detectedShell = this.detectShellType(session);
-                    const wrappedCommand = this.getWrappedCommand(command, startMarker, endMarker, detectedShell);
-                    session.tab.sendInput(wrappedCommand + '\n');
-
-                    this.logger.info(`Executing command: ${command} in session ${session.sessionId} (shell: ${detectedShell}, stream: ${!!outputStream$})`);
-
-                    // Wait for output
                     let result: CommandResult;
-                    if (outputStream$) {
-                        result = await this.waitForCommandOutputViaStream(outputStream$, startMarker, endMarker, timeout, () => aborted, session);
+                    if (isPosixMode(plan.mode)) {
+                        // Setup Stream Capture if enabled
+                        const useStreamCapture = this.config.store.mcp?.useStreamCapture ?? false;
+                        let outputStream$: ReplaySubject<string> | undefined;
+                        let rawSubscription: Subscription | undefined;
+
+                        if (useStreamCapture) {
+                            const sessionAny = session.tab.session as any;
+                            if (sessionAny?.output$) {
+                                outputStream$ = new ReplaySubject<string>();
+                                rawSubscription = sessionAny.output$.subscribe(outputStream$);
+                                this.logger.debug(`[Exec] Stream capture enabled for session ${session.sessionId}`);
+                            } else {
+                                this.logger.warn(`[Exec] Stream capture requested but output$ unavailable. Fallback to buffer.`);
+                            }
+                        }
+
+                        // Send command with markers - use shell-aware wrapper
+                        const wrappedCommand = this.getWrappedCommand(command, startMarker, endMarker, plan.mode);
+                        session.tab.sendInput(wrappedCommand + plan.lineEnding);
+
+                        this.logger.info(`Executing command: ${command} in session ${session.sessionId} (shell: ${plan.mode}, stream: ${!!outputStream$})`);
+
+                        // Wait for output
+                        if (outputStream$) {
+                            result = await this.waitForCommandOutputViaStream(outputStream$, startMarker, endMarker, timeout, () => aborted, session, prompt);
+                        } else {
+                            result = await this.waitForCommandOutputViaBuffer(session, startMarker, endMarker, timeout, () => aborted, prompt);
+                        }
+
+                        // Clean up stream resources
+                        if (rawSubscription) {
+                            rawSubscription.unsubscribe();
+                        }
+                    } else if (plan.mode === 'powershell' || plan.mode === 'cmd' || plan.mode === 'template') {
+                        const lines = plan.mode === 'template'
+                            ? buildTemplateLines(plan.template || '', command, startMarker, endMarker, plan.escape)
+                            : [buildBuiltinWrapper(command, startMarker, endMarker, plan.mode)];
+                        session.tab.sendInput(lines.map(line => line + plan.lineEnding).join(''));
+                        this.logger.info(`Executing command: ${command} in session ${session.sessionId} (mode: ${plan.mode})`);
+                        result = await this.waitForMarkedOutput(session, startMarker, endMarker, plan.mode === 'template', timeout, () => aborted, prompt);
+                    } else if (plan.mode === 'osc133') {
+                        result = await this.runWithSemanticMarks(session, command, plan.lineEnding, timeout, () => aborted, prompt);
                     } else {
-                        result = await this.waitForCommandOutputViaBuffer(session, startMarker, endMarker, timeout, () => aborted);
+                        session.tab.sendInput(command + plan.lineEnding);
+                        this.logger.info(`Executing command: ${command} in session ${session.sessionId} (mode: raw)`);
+                        result = await this.waitForPromptReturn(session, command, timeout, () => aborted, prompt);
                     }
 
-                    // Clean up stream resources
-                    if (rawSubscription) {
-                        rawSubscription.unsubscribe();
+                    // Learn from the outcome for future auto detection
+                    if (result.wrapperRejected && prompt.learnedPrompt) {
+                        this.learnedRawPrompts.set(session.sessionId, prompt.learnedPrompt);
+                        this.logger.warn(`[Exec] Wrapper rejected in session ${session.sessionId}; future commands at this prompt use raw mode`);
+                    } else if (typeof result.exitCode === 'number' && result.exitCode !== -1 && plan.mode !== 'raw') {
+                        this.learnedRawPrompts.delete(session.sessionId);
                     }
 
                     // Clean up active command
@@ -579,7 +655,7 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                     this._activeCommandsSubject.next(new Map(this._activeCommands));
 
                     // Add sessionId to result for reference
-                    return { content: [{ type: 'text', text: JSON.stringify({ ...result, sessionId: session.sessionId }) }] };
+                    return { content: [{ type: 'text', text: JSON.stringify({ ...result, sessionId: session.sessionId, ...modeInfo }) }] };
                 } catch (error: any) {
                     this._activeCommands.delete(session.sessionId);
                     this._activeCommandsSubject.next(new Map(this._activeCommands));
@@ -588,8 +664,96 @@ For long-running commands, increase timeout or use waitForOutput=false and poll 
                     return {
                         content: [{ type: 'text', text: JSON.stringify({ success: false, error: error.message }) }]
                     };
+                } finally {
+                    stopSemanticWatch?.();
                 }
             }
+        };
+    }
+
+    /**
+     * Decide how exec_command runs in this session.
+     * Priority: explicit `shell` > matching rule in settings > auto detection.
+     */
+    private resolveExecPlan(
+        session: TerminalSessionWithTab,
+        params: { shell?: ShellOverride; promptPattern?: string; idleMs?: number; lineEnding?: LineEndingSetting }
+    ): ExecPlan | { error: string } {
+        const tabAny = session.tab as any;
+        const profile = tabAny.profile || {};
+        const rules: ExecRule[] = this.config.store.mcp?.execRules || [];
+        const rule = findMatchingRule(rules, {
+            title: session.tab.title || '',
+            profileName: profile.name || '',
+            profileId: profile.id || ''
+        });
+        const ruleLabel = rule ? `rule "${rule.match}"` : '';
+
+        const patternSource = params.promptPattern ?? rule?.promptPattern;
+        const compiled = compilePromptPattern(patternSource);
+        if (compiled.error) {
+            return { error: compiled.error };
+        }
+        const idleMs = clampIdleMs(params.idleMs ?? rule?.idleMs);
+        const lineSetting: LineEndingSetting | undefined =
+            params.lineEnding && params.lineEnding !== 'auto' ? params.lineEnding : rule?.lineEnding;
+
+        let mode: ExecMode;
+        let reason: string;
+        let template: string | undefined;
+
+        const explicit = params.shell && params.shell !== 'auto' ? params.shell : undefined;
+        const fromRule = !explicit && rule && rule.mode !== 'auto' ? rule.mode : undefined;
+
+        if (explicit) {
+            mode = explicit;
+            reason = 'requested by shell parameter';
+        } else if (fromRule === 'template') {
+            const problem = validateTemplate(rule?.template);
+            if (problem) {
+                return { error: `${ruleLabel}: ${problem}` };
+            }
+            mode = 'template';
+            template = rule?.template;
+            reason = ruleLabel;
+        } else if (fromRule) {
+            mode = fromRule;
+            reason = ruleLabel;
+        } else {
+            const tail = this.getTerminalPlainText(session, 15);
+            const options = profile.options || {};
+            const auto = resolveAutoMode({
+                promptLine: lastNonEmptyLine(tail),
+                recentText: tail,
+                shellPath: `${options.command || ''} ${options.shell || ''}`,
+                learnedRawPrompt: this.learnedRawPrompts.get(session.sessionId),
+                osc133Seen: this.osc133Sessions.has(session.sessionId)
+            });
+            if (auto.mode) {
+                mode = auto.mode;
+                reason = `auto: ${auto.reason}`;
+            } else {
+                mode = this.detectShellType(session);
+                reason = `auto: ${auto.reason}`;
+            }
+            if (rule) {
+                reason += ` (${ruleLabel} adjusts prompt/line ending)`;
+            }
+        }
+
+        if (mode === 'osc133' && !(tabAny.session as any)?.output$) {
+            mode = 'raw';
+            reason += '; OSC 133 needs the session output stream, using raw mode';
+        }
+
+        return {
+            mode,
+            reason,
+            lineEnding: lineEndingFor(mode, lineSetting),
+            idleMs,
+            promptRegex: compiled.regex,
+            template,
+            escape: rule?.escape
         };
     }
 
@@ -1039,6 +1203,16 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                 break;
             }
 
+            // Windows shells and RouterOS end their prompt with '>' (Issue #18)
+            const promptKind = classifyPromptLine(candidate.clean);
+            if (promptKind === 'powershell' || promptKind === 'cmd' || promptKind === 'routeros') {
+                isShell = true;
+                environment = promptKind;
+                promptRaw = candidate.raw;
+                promptClean = candidate.clean;
+                break;
+            }
+
             if (/[$#%❯➜]\s*$/.test(candidate.clean)) {
                 isShell = true;
                 const detectedShell = this.detectShellType(session);
@@ -1136,7 +1310,9 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
                     }
                 }
 
-                const shell = isShell ? (['bash', 'zsh', 'fish', 'sh', 'shell'].includes(environment) ? environment : this.detectShellType(session)) : undefined;
+                const shell = isShell
+                    ? (['bash', 'zsh', 'fish', 'sh', 'shell', 'powershell', 'cmd', 'routeros'].includes(environment) ? environment : this.detectShellType(session))
+                    : undefined;
 
                 return {
                     content: [{
@@ -1165,7 +1341,12 @@ Session targeting: sessionId (recommended) > tabIndex > title > profileName`,
             return null;
         }
 
-        const shell = this.detectShellType(session);
+        // The probe is POSIX/fish syntax; never type it into PowerShell, cmd.exe or a device CLI (Issue #18)
+        const plan = this.resolveExecPlan(session, {});
+        if ('error' in plan || !isPosixMode(plan.mode)) {
+            return null;
+        }
+        const shell = plan.mode;
         // fish does not support POSIX `if [ -n ... ]; then` syntax, so use a fish-native probe
         const command = shell === 'fish'
             ? `printf '__MCP_ENV__:'; if test -n "$VIRTUAL_ENV"; printf 'python-venv'; else if test -n "$CONDA_DEFAULT_ENV"; printf 'python-conda'; else if test -n "$IN_NIX_SHELL"; printf 'nix-shell'; else; printf 'shell'; end; printf ':__MCP_ENV__'`
@@ -1458,6 +1639,322 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
     }
 
     /**
+     * Plain screen text (escape sequences removed, wrapped rows joined, trailing empty rows dropped).
+     * With maxLines, only the last logical lines are read, which keeps polling cheap.
+     */
+    private getTerminalPlainText(session: TerminalSessionWithTab, maxLines?: number): string {
+        try {
+            const xtermInstance = (session.tab.frontend as any)?.xterm;
+            const buffer = xtermInstance?.buffer?.active;
+            if (!buffer || typeof buffer.getLine !== 'function') {
+                const lines = trimTrailingEmptyLines(splitLines(normalizeTerminalText(this.getTerminalBufferText(session))));
+                return (maxLines ? lines.slice(-maxLines) : lines).join('\n');
+            }
+            const logical: string[] = [];
+            let pending = '';
+            for (let i = buffer.length - 1; i >= 0; i--) {
+                const row = buffer.getLine(i);
+                if (!row) {
+                    continue;
+                }
+                pending = row.translateToString(false) + pending;
+                if (row.isWrapped && i > 0) {
+                    continue;
+                }
+                const text = pending.trimEnd();
+                pending = '';
+                if (logical.length === 0 && !text) {
+                    continue;
+                }
+                logical.push(text);
+                if (maxLines && logical.length >= maxLines) {
+                    break;
+                }
+            }
+            return logical.reverse().join('\n');
+        } catch (err) {
+            this.logger.debug('Error reading plain terminal text:', err);
+            return '';
+        }
+    }
+
+    /** Returns the last screen lines and how long they have stayed unchanged */
+    private createIdleTracker(session: TerminalSessionWithTab): () => { tail: string; idleFor: number } {
+        let signature: string | undefined;
+        let changedAt = Date.now();
+        return () => {
+            const tail = this.getTerminalPlainText(session, 30);
+            if (tail !== signature) {
+                signature = tail;
+                changedAt = Date.now();
+            }
+            return { tail, idleFor: Date.now() - changedAt };
+        };
+    }
+
+    private getClosedSessionResult(session: TerminalSessionWithTab): CommandResult | null {
+        const tabAny = session.tab as any;
+        if (tabAny.session && tabAny.session.open === false) {
+            const canReconnect = typeof tabAny.reconnect === 'function';
+            return {
+                success: false,
+                output: '',
+                error: canReconnect
+                    ? "Session is closed ('Press any key to reconnect'). Use reconnect_session to reconnect."
+                    : 'Session disconnected during execution',
+                canReconnect,
+                exitCode: -1
+            };
+        }
+        return null;
+    }
+
+    /**
+     * The start marker was never printed, the prompt is back and the screen is quiet:
+     * the shell did not understand the wrapper (Issue #18). Report it instead of waiting for the timeout.
+     */
+    private checkWrapperRejected(
+        session: TerminalSessionWithTab,
+        startMarker: string,
+        prompt: PromptContext,
+        tail: string,
+        idleFor: number
+    ): CommandResult | null {
+        if (idleFor < Math.max(WRAPPER_REJECT_IDLE_MS, prompt.idleMs * 2)) {
+            return null;
+        }
+        if (tail === tailLines(prompt.before, 30)) {
+            return null;
+        }
+        const line = lastNonEmptyLine(tail);
+        if (line.includes(startMarker) || !isPromptReturned(line, prompt.learnedPrompt, idleFor, prompt.idleMs, prompt.promptRegex)) {
+            return null;
+        }
+        const full = this.getTerminalPlainText(session);
+        if (findPrintedStartMarker(full, startMarker) !== -1) {
+            return null;
+        }
+        return {
+            success: false,
+            output: extractRawOutput(prompt.before, full, '').output,
+            exitCode: null,
+            exitCodeKnown: false,
+            wrapperRejected: true,
+            error: 'The session did not run the command wrapper, so the command may not have run. This does not look like the detected shell.',
+            hint: 'Retry with shell: "raw", or add a rule in Settings → MCP → Command execution. Later commands at this prompt use raw mode automatically.'
+        };
+    }
+
+    /** Remember sessions whose shell reports command-finished marks (OSC 133/633 D) */
+    private watchSemanticMarks(session: TerminalSessionWithTab): () => void {
+        const output$ = (session.tab.session as any)?.output$;
+        if (!output$ || typeof output$.subscribe !== 'function') {
+            return () => undefined;
+        }
+        let carry = '';
+        const subscription: Subscription = output$.subscribe((chunk: string) => {
+            const text = carry + chunk;
+            if (containsCommandFinishedMark(text)) {
+                this.osc133Sessions.add(session.sessionId);
+            }
+            carry = text.slice(-64);
+        });
+        return () => subscription.unsubscribe();
+    }
+
+    /** PowerShell, cmd.exe and template wrappers: wait for the printed end marker on the plain screen */
+    private async waitForMarkedOutput(
+        session: TerminalSessionWithTab,
+        startMarker: string,
+        endMarker: string,
+        anchored: boolean,
+        timeout: number,
+        isAborted: () => boolean,
+        prompt: PromptContext
+    ): Promise<CommandResult> {
+        const startTime = Date.now();
+        const pollInterval = this.config.store.mcp?.timing?.pollInterval ?? 100;
+        const idle = this.createIdleTracker(session);
+
+        while (Date.now() - startTime < timeout) {
+            if (isAborted()) {
+                return { success: false, output: '', error: 'Command aborted' };
+            }
+            const closed = this.getClosedSessionResult(session);
+            if (closed) {
+                return closed;
+            }
+
+            const { tail, idleFor } = idle();
+            if (findEndMarker(tail, endMarker, anchored)) {
+                const full = this.getTerminalPlainText(session);
+                const end = findEndMarker(full, endMarker, anchored);
+                if (end) {
+                    const { output, truncated } = extractMarkedOutput(full, startMarker, end);
+                    return {
+                        success: end.exitCode === null || end.exitCode === 0,
+                        output: truncated ? `[MCP Warning: Output truncated, start marker missing]\n${output}` : output,
+                        exitCode: end.exitCode,
+                        ...(end.exitCode === null ? { exitCodeKnown: false } : {})
+                    };
+                }
+            }
+
+            const rejected = this.checkWrapperRejected(session, startMarker, prompt, tail, idleFor);
+            if (rejected) {
+                return rejected;
+            }
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        const full = this.getTerminalPlainText(session);
+        const startIndex = findPrintedStartMarker(full, startMarker);
+        return {
+            success: false,
+            output: startIndex !== -1 ? full.slice(startIndex).trim() : '',
+            error: startIndex !== -1 ? 'Command timeout (partial output captured)' : 'Command timeout',
+            exitCode: -1
+        };
+    }
+
+    /** Raw mode: the command is sent as typed; completion is the returned prompt after a quiet period */
+    private async waitForPromptReturn(
+        session: TerminalSessionWithTab,
+        command: string,
+        timeout: number,
+        isAborted: () => boolean,
+        prompt: PromptContext
+    ): Promise<CommandResult> {
+        const startTime = Date.now();
+        const pollInterval = this.config.store.mcp?.timing?.pollInterval ?? 100;
+        const idle = this.createIdleTracker(session);
+        const initialTail = tailLines(prompt.before, 30);
+
+        while (Date.now() - startTime < timeout) {
+            if (isAborted()) {
+                return { success: false, output: '', error: 'Command aborted' };
+            }
+            const closed = this.getClosedSessionResult(session);
+            if (closed) {
+                return closed;
+            }
+
+            const { tail, idleFor } = idle();
+            if (tail !== initialTail) {
+                const line = lastNonEmptyLine(tail);
+                if (!isEchoLine(line, command)) {
+                    if (isPagerLine(line) && idleFor >= prompt.idleMs) {
+                        const full = this.getTerminalPlainText(session);
+                        return {
+                            success: true,
+                            output: extractRawOutput(prompt.before, full, command).output,
+                            exitCode: null,
+                            exitCodeKnown: false,
+                            pagerDetected: true,
+                            hint: 'Output is paused by a pager. Send a space or "q" with send_input, or turn paging off on the device.'
+                        };
+                    }
+                    if (isPromptReturned(line, prompt.learnedPrompt, idleFor, prompt.idleMs, prompt.promptRegex)) {
+                        const full = this.getTerminalPlainText(session);
+                        return {
+                            success: true,
+                            output: extractRawOutput(prompt.before, full, command).output,
+                            exitCode: null,
+                            exitCodeKnown: false
+                        };
+                    }
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        const full = this.getTerminalPlainText(session);
+        return {
+            success: false,
+            output: extractRawOutput(prompt.before, full, command, false).output,
+            error: 'Command timeout (the prompt did not return; partial output captured)',
+            exitCode: -1,
+            hint: 'For an unusual prompt pass promptPattern; for long output that pauses, raise idleMs.'
+        };
+    }
+
+    /** OSC 133 mode: send the command as typed and wait for the shell's command-finished mark */
+    private async runWithSemanticMarks(
+        session: TerminalSessionWithTab,
+        command: string,
+        lineEnding: string,
+        timeout: number,
+        isAborted: () => boolean,
+        prompt: PromptContext
+    ): Promise<CommandResult> {
+        const output$ = (session.tab.session as any)?.output$;
+        if (!output$ || typeof output$.subscribe !== 'function') {
+            session.tab.sendInput(command + lineEnding);
+            return this.waitForPromptReturn(session, command, timeout, isAborted, prompt);
+        }
+
+        let data = '';
+        const subscription: Subscription = output$.subscribe((chunk: string) => { data += chunk; });
+        session.tab.sendInput(command + lineEnding);
+        this.logger.info(`Executing command: ${command} in session ${session.sessionId} (mode: osc133)`);
+
+        try {
+            const startTime = Date.now();
+            const pollInterval = this.config.store.mcp?.timing?.pollInterval ?? 100;
+            const idle = this.createIdleTracker(session);
+            const initialTail = tailLines(prompt.before, 30);
+
+            while (Date.now() - startTime < timeout) {
+                if (isAborted()) {
+                    return { success: false, output: '', error: 'Command aborted' };
+                }
+                const closed = this.getClosedSessionResult(session);
+                if (closed) {
+                    return closed;
+                }
+
+                const parsed = parseSemanticCommand(data);
+                if (parsed.done) {
+                    return {
+                        success: parsed.exitCode === null || parsed.exitCode === 0,
+                        output: parsed.output,
+                        exitCode: parsed.exitCode,
+                        ...(parsed.exitCode === null ? { exitCodeKnown: false } : {})
+                    };
+                }
+
+                // The shell stopped sending marks: accept the returned prompt instead
+                const { tail, idleFor } = idle();
+                const line = lastNonEmptyLine(tail);
+                if (tail !== initialTail && !isEchoLine(line, command) &&
+                    idleFor >= Math.max(WRAPPER_REJECT_IDLE_MS, prompt.idleMs * 2) &&
+                    isPromptReturned(line, prompt.learnedPrompt, idleFor, prompt.idleMs, prompt.promptRegex)) {
+                    this.osc133Sessions.delete(session.sessionId);
+                    const full = this.getTerminalPlainText(session);
+                    return {
+                        success: true,
+                        output: extractRawOutput(prompt.before, full, command).output,
+                        exitCode: null,
+                        exitCodeKnown: false,
+                        hint: 'No OSC 133 command-finished mark arrived; completion was taken from the returned prompt.'
+                    };
+                }
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+            }
+
+            const newline = data.indexOf('\n');
+            return {
+                success: false,
+                output: newline !== -1 ? normalizeTerminalText(data.slice(newline + 1)).trim() : '',
+                error: 'Command timeout (no OSC 133 command-finished mark)',
+                exitCode: -1
+            };
+        } finally {
+            subscription.unsubscribe();
+        }
+    }
+
+    /**
      * Get terminal buffer as text
      */
     private getTerminalBufferText(session: TerminalSessionWithTab): string {
@@ -1499,9 +1996,11 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
         startMarker: string,
         endMarker: string,
         timeout: number,
-        isAborted: () => boolean
+        isAborted: () => boolean,
+        prompt?: PromptContext
     ): Promise<CommandResult> {
         const startTime = Date.now();
+        const idle = this.createIdleTracker(session);
 
         // Get timing config (with fallback defaults)
         const timing = this.config.store.mcp?.timing || {};
@@ -1540,7 +2039,7 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
 
             // Look for end marker with exit code pattern (complete marker)
             // End marker format: __MCP_END_<timestamp>__ <exit_code>
-            const endPattern = new RegExp(`${endMarker}\\s+(\\d+)`, 'm');
+            const endPattern = new RegExp(`${endMarker}\\s+(-?\\d+)`, 'm');
             const endMatch = buffer.match(endPattern);
 
             if (endMatch) {
@@ -1587,6 +2086,15 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                 }
             }
 
+            // The shell never ran our wrapper (e.g. a router CLI with a POSIX-looking prompt)
+            if (prompt) {
+                const { tail, idleFor } = idle();
+                const rejected = this.checkWrapperRejected(session, startMarker, prompt, tail, idleFor);
+                if (rejected) {
+                    return rejected;
+                }
+            }
+
             // Wait between checks (configurable via Settings → MCP → Timing)
             await new Promise(resolve => setTimeout(resolve, pollInterval));
         }
@@ -1624,9 +2132,11 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
         endMarker: string,
         timeout: number,
         isAborted: () => boolean,
-        session: TerminalSessionWithTab
+        session: TerminalSessionWithTab,
+        prompt?: PromptContext
     ): Promise<CommandResult> {
         let buffer = '';
+        const idle = this.createIdleTracker(session);
         // eslint-disable-next-line prefer-const
         let subscription: Subscription;
 
@@ -1681,6 +2191,16 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                         canReconnect,
                         exitCode: -1
                     });
+                    return;
+                }
+                if (prompt) {
+                    const { tail, idleFor } = idle();
+                    const rejected = this.checkWrapperRejected(session, startMarker, prompt, tail, idleFor);
+                    if (rejected) {
+                        resolved = true;
+                        cleanup();
+                        resolve(rejected);
+                    }
                 }
             }, 500);
 
@@ -1706,7 +2226,7 @@ After focusing, commands sent to that split tab will go to the focused pane.`,
                     buffer += data;
 
                     // Look for end marker
-                    const endPattern = new RegExp(`${endMarker}\\s+(\\d+)`, 'm');
+                    const endPattern = new RegExp(`${endMarker}\\s+(-?\\d+)`, 'm');
                     const endMatch = buffer.match(endPattern);
 
                     if (endMatch) {

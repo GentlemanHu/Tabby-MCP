@@ -59,6 +59,7 @@ export class PluginUpdateService {
                 return left > right;
             }
         }
-        return false;
+        // Same numbers: a stable release supersedes an installed prerelease (1.9.0 > 1.9.0-rc.1)
+        return !remote.includes('-') && local.includes('-');
     }
 }
